@@ -40,7 +40,12 @@ from infrastructure.scheduling.scheduler.loop_constants import (
     LOOP_MODE_REPORT,
     LOOP_WEBAPP_REQUEST_ID_PARAM,
 )
-from infrastructure.scheduling.scheduler.loop_edit import edit_loop, loop_changes
+from infrastructure.scheduling.scheduler.loop_edit import (
+    DELIVERY_FIELDS,
+    edit_loop,
+    loop_changes,
+    validate_loop_changes,
+)
 from infrastructure.scheduling.scheduler.loops import (
     LoopSummary,
     create_manual_loop,
@@ -383,6 +388,15 @@ class WebappLoopSync:
             timezone=field["timezone"],
             mode=field["mode"],
         )
+        if payload.get("channels"):
+            # Delivery is edited only when the app sends it; destinations it
+            # leaves out keep their current value.
+            delivery = {
+                key: ",".join(_strings(payload[key])) if key == "channels" else str(payload[key])
+                for key in DELIVERY_FIELDS
+                if payload.get(key) is not None
+            }
+            changes = {**changes, **validate_loop_changes(delivery)}
         mutation, error = edit_loop(summary.task_ids, changes, loop_id=summary.id)
         if mutation is None:
             return RecordedOutcome(False, error=error)
