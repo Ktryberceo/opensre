@@ -109,6 +109,7 @@ def _repo_ref(node: Any, *, fallback_owner: str) -> RepoRef | None:
         name=name,
         is_private=bool(node.get("isPrivate")),
         pushed_at=str(node.get("pushedAt") or ""),
+        is_fork=bool(node.get("isFork")),
     )
 
 

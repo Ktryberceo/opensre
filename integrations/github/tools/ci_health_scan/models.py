@@ -23,6 +23,7 @@ class RepoRef:
     name: str
     is_private: bool = False
     pushed_at: str = ""
+    is_fork: bool = False
 
     @property
     def full_name(self) -> str:

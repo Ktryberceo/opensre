@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from integrations.github.status_policy import is_policy_blocked_status
 from integrations.github.tools.ci_health_scan.models import CheckSummary, FailingCheck
 
 #: Check-run conclusions that mean the check failed.
@@ -28,7 +29,8 @@ def classify_rollup(rollup: Any, extra_nodes: Sequence[Any] = ()) -> CheckSummar
     """Reduce a ``statusCheckRollup`` node to the checks that failed on it.
 
     Returns an empty summary when the commit has no rollup at all (no CI ran).
-    Check-runs are judged by ``conclusion``, status contexts by ``state``.
+    Check-runs are judged by ``conclusion``, status contexts by ``state``; a
+    status a hosting policy blocked (not the build) is not a failure.
     ``extra_nodes`` are context nodes fetched from later pages; ``truncated``
     is true while ``totalCount`` still exceeds every node seen.
     """
@@ -58,7 +60,7 @@ def classify_rollup(rollup: Any, extra_nodes: Sequence[Any] = ()) -> CheckSummar
                 cancelled.setdefault(name)
             continue
         state = _text(node.get("state")).upper()
-        if state in FAILED_STATUS_STATES:
+        if state in FAILED_STATUS_STATES and not is_policy_blocked_status(node.get("description")):
             name = _text(node.get("context")) or "Unnamed status"
             failing.setdefault(
                 name, FailingCheck(name=name, state=state, url=_text(node.get("targetUrl")))

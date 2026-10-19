@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
 
+from integrations.github.client import GitHubApiError, GitHubRestClient
+from integrations.github.status_policy import is_policy_blocked_status
 from integrations.github.tools.ci_fix.context import MERGE_STATE_DIRTY, CiFixContext
 from integrations.github.tools.ci_fix.gh import run_gh_json
 
@@ -58,6 +60,8 @@ class CheckVerification:
     check_names: tuple[str, ...]
     failing_checks: tuple[str, ...] = ()
     observed_head_sha: str = ""
+    #: Failed statuses a hosting policy blocked (e.g. a deployment); not counted as failing.
+    blocked_checks: tuple[str, ...] = ()
 
 
 def wait_for_pr_checks(
@@ -160,8 +164,8 @@ def wait_for_pr_checks(
                             github_token=github_token,
                             expected_head_sha=expected_head_sha,
                         )
-                    failing = tuple(
-                        _check_name(check)
+                    failed_rows = [
+                        check
                         for check in checks
                         if check_failed(
                             check,
@@ -169,11 +173,20 @@ def wait_for_pr_checks(
                             targeted_checks=targeted_checks,
                             failed_run_ids=failed_run_ids,
                         )
+                    ]
+                    blocked = _policy_blocked_statuses(
+                        failed_rows, repo=repo, github_token=github_token, sha=expected_head_sha
+                    )
+                    failing = tuple(
+                        name
+                        for name in (_check_name(check) for check in failed_rows)
+                        if name not in blocked
                     )
                     return CheckVerification(
                         state=CheckState.FAILED if failing else CheckState.PASSED,
                         check_names=last_names,
                         failing_checks=failing,
+                        blocked_checks=tuple(sorted(blocked)),
                     )
             else:
                 terminal_signature = ()
@@ -185,6 +198,30 @@ def wait_for_pr_checks(
         if now >= deadline:
             return CheckVerification(state=CheckState.TIMED_OUT, check_names=last_names)
         sleep(max(0, poll_interval_seconds))
+
+
+def _policy_blocked_statuses(
+    failed: list[dict[str, Any]], *, repo: str, github_token: str | None, sha: str
+) -> frozenset[str]:
+    """Failed commit-status names whose description says a hosting policy blocked them.
+
+    The PR rollup ``gh`` returns has no status descriptions, so the commit's
+    combined status is read once, only when a failed status context is present.
+    """
+    if not github_token or not any("context" in row and "conclusion" not in row for row in failed):
+        return frozenset()
+    try:
+        combined = GitHubRestClient(github_token).request(
+            "GET", f"repos/{repo}/commits/{sha}/status"
+        )
+    except GitHubApiError:
+        return frozenset()
+    statuses = combined.get("statuses") if isinstance(combined, dict) else None
+    return frozenset(
+        str(status.get("context") or "")
+        for status in statuses or ()
+        if isinstance(status, dict) and is_policy_blocked_status(status.get("description"))
+    )
 
 
 def wait_for_branch_checks(

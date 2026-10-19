@@ -21,7 +21,7 @@ _CONTEXT_NODES = """
       nodes {
         __typename
         ... on CheckRun { name conclusion detailsUrl }
-        ... on StatusContext { context state targetUrl }
+        ... on StatusContext { context state targetUrl description }
       }
 """
 
@@ -69,6 +69,7 @@ query OwnerRepos($login: String!, $after: String, $privacy: RepositoryPrivacy) {
       nodes {{
         name
         isPrivate
+        isFork
         pushedAt
         owner {{ login }}
       }}

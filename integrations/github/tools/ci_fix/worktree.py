@@ -126,6 +126,39 @@ def create_branch_checkout(
     return BranchWorktree(path=workspace, branch_name=branch_name)
 
 
+def checkout_branch_in_place(
+    workspace: str, ctx: CiFixContext, *, token: str | None = None
+) -> BranchWorktree:
+    """Check out the target branch itself in a run-owned clone, so a fix lands on it directly."""
+    target_branch = ctx.target_branch or ctx.base_branch
+    try:
+        ensure_git_repo(workspace)
+        fetch_remote_branch(workspace, target_branch, token=token)
+        result = subprocess.run(
+            ["git", "checkout", "-B", target_branch, f"origin/{target_branch}"],
+            cwd=workspace,
+            capture_output=True,
+            text=True,
+            timeout=_GIT_TIMEOUT_SEC,
+            check=False,
+        )
+    except GitCommandError as exc:
+        raise GitHubCiFixError(exc.kind, exc.message, branch_name=target_branch) from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise GitHubCiFixError(
+            BRANCH_FAILED,
+            f"Could not check out '{target_branch}' for the fix: {exc}",
+            branch_name=target_branch,
+        ) from exc
+    if result.returncode != 0:
+        raise GitHubCiFixError(
+            BRANCH_FAILED,
+            f"Could not check out '{target_branch}' for the fix: {result.stderr.strip()}",
+            branch_name=target_branch,
+        )
+    return BranchWorktree(path=workspace, branch_name=target_branch)
+
+
 def cleanup_branch_worktree(workspace: str, worktree: BranchWorktree) -> None:
     """Best-effort removal of a temporary branch-fix worktree and local branch."""
     with suppress(OSError, subprocess.TimeoutExpired):
@@ -172,6 +205,7 @@ def _remove_path(path: Path) -> None:
 __all__ = [
     "BranchWorktree",
     "build_branch_name",
+    "checkout_branch_in_place",
     "cleanup_branch_worktree",
     "create_branch_checkout",
     "create_branch_worktree",

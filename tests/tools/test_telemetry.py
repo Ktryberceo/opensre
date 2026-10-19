@@ -1303,6 +1303,12 @@ _TOOLS_WITHOUT_DELIBERATE_CATCH: frozenset[str] = frozenset(
         "execute_yc_operation",
         "fetch_failed_run",
         "find_yc_api",
+        # fix_github_ci_fleet and schedule_github_ci_fleet_fix catch only known
+        # states (GitHub refused the listing, an unparseable schedule); a target's
+        # unexpected error is reported inside the sweep, and the rest escape to
+        # the global #1476 wrapper.
+        "fix_github_ci_fleet",
+        "schedule_github_ci_fleet_fix",
         # fix_github_pr_ci catches only GitHubCiFixError for known states;
         # unexpected errors escape to the global #1476 wrapper.
         "fix_github_pr_ci",

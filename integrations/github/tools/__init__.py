@@ -6,6 +6,7 @@ TOOL_MODULES = (
     "actions",
     "ci_analytics",
     "ci_fix",
+    "ci_fleet",
     "ci_health_scan",
     "ci_repair_demo",
     "ci_repair_loop",

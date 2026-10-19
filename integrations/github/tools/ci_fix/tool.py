@@ -21,6 +21,7 @@ from integrations.github.helpers import (
 from integrations.github.repair_outcomes import attach_repair_outcome
 from integrations.github.tools.ci_fix.ledger import record_ci_fix_outcome
 from integrations.github.tools.ci_fix.runner import run_ci_fix
+from integrations.github.tools.ci_fix.ship import BranchDelivery
 
 _INPUT_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -48,7 +49,16 @@ _INPUT_SCHEMA: dict[str, Any] = {
                 "(e.g. 'main'). Use only when the user asks to fix a branch's CI "
                 "itself; mutually exclusive with the PR selectors. OpenSRE pushes a "
                 "fresh repair branch from a linked worktree — never the protected "
-                "branch directly."
+                "branch directly, unless push_to_branch is set."
+            ),
+        },
+        "push_to_branch": {
+            "type": "boolean",
+            "description": (
+                "With branch: True only when the user explicitly asks to commit the fix "
+                "straight onto that branch (e.g. 'fix main and push straight to main'). "
+                "The fix is made in a fresh clone and never force-pushed; if a branch rule "
+                "requires a pull request, the tool opens one and says why."
             ),
         },
         "workspace": {
@@ -113,7 +123,8 @@ def _action_scope(context: Any) -> Any:
         "an auto-detected coding agent with the failing log context, commit the "
         "result, push the PR branch or a fresh repair branch from a linked "
         "worktree, and wait for the new checks to finish. It refuses fork PR "
-        "branches and never pushes directly to protected branches such as main."
+        "branches and pushes directly to a protected branch such as main only "
+        "when push_to_branch is set."
     ),
     use_cases=[
         "Fix failing CI on a GitHub pull request and push to the PR branch",
@@ -142,6 +153,7 @@ def fix_github_pr_ci(
     pr_number: int | None = None,
     pr_url: str | None = None,
     branch: str | None = None,
+    push_to_branch: bool = False,
     workspace: str | None = None,
     model: str | None = None,
     github_token: str | None = None,
@@ -160,6 +172,7 @@ def fix_github_pr_ci(
         github_token=github_token,
         confirm_fn=_confirm_fn(context),
         console=_console(context),
+        branch_delivery=(BranchDelivery.DIRECT if push_to_branch else BranchDelivery.REPAIR_BRANCH),
     )
     record_ci_fix_outcome(output)
     return attach_repair_outcome(

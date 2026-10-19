@@ -16,7 +16,9 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from urllib.parse import urlsplit
 
 from config.constants.git import (
@@ -48,6 +50,7 @@ _GIT_CLONE_TIMEOUT_SEC = 120
 _REMOTE_TIMEOUT_SEC = 15
 # Branch names we refuse to create or push to, on top of the resolved default.
 _PROTECTED_BRANCHES = frozenset({"main", "master", "develop", "trunk"})
+_OPENSRE_AUTHORED: ContextVar[bool] = ContextVar("opensre_authored_commits", default=False)
 
 
 def _with_opensre_coauthor(message: str) -> str:
@@ -72,13 +75,31 @@ def _opensre_author_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
     return {**(env if env is not None else os.environ), **identity}
 
 
+@contextmanager
+def opensre_authored_commits() -> Iterator[None]:
+    """Record every commit made inside this block, in this thread, as the OpenSRE Agent's.
+
+    For unattended work no person wrote, such as a scheduled CI sweep. A clone
+    made inside the block also keeps the identity in its own git config, so a
+    commit the coding agent or a merge makes there is the agent's as well.
+    """
+    token = _OPENSRE_AUTHORED.set(True)
+    try:
+        yield
+    finally:
+        _OPENSRE_AUTHORED.reset(token)
+
+
 def _content_commit_env(workspace: str) -> dict[str, str] | None:
     """The environment for a content commit: the OpenSRE Agent identity where git has none.
 
     A person's checkout keeps that person as author, with the co-author trailer,
     whether git knows them from its config or from ``GIT_AUTHOR_*`` and
     ``GIT_COMMITTER_*``. A hosted container has neither, and the commit would fail.
+    Inside :func:`opensre_authored_commits` the agent is always the author.
     """
+    if _OPENSRE_AUTHORED.get():
+        return _opensre_author_env()
     configured = {
         field: _configured_git_value(workspace, f"user.{field}") for field in ("name", "email")
     }
@@ -216,6 +237,9 @@ def clone_repository(url: str, workspace: str, *, token: str | None = None) -> N
         raise GitCommandError(HEAVY_WORK_BUSY, HEAVY_WORK_BUSY_MESSAGE)
     if result.returncode != 0:
         raise GitCommandError(NOT_A_GIT_REPO, "Could not clone the selected repository.")
+    if _OPENSRE_AUTHORED.get():
+        _run_git(workspace, "config", "user.name", OPENSRE_COMMIT_COAUTHOR_NAME)
+        _run_git(workspace, "config", "user.email", OPENSRE_COMMIT_COAUTHOR_EMAIL)
 
 
 def ensure_git_repo(workspace: str) -> None:

@@ -300,6 +300,17 @@ if TYPE_CHECKING:
     from config.constants.ci_fixes import (
         CI_FIX_UNSETTLED_MERGE_ATTEMPTS as CI_FIX_UNSETTLED_MERGE_ATTEMPTS,
     )
+    from config.constants.ci_fleet import CI_FLEET_ACTIVE_DAYS as CI_FLEET_ACTIVE_DAYS
+    from config.constants.ci_fleet import CI_FLEET_CRON as CI_FLEET_CRON
+    from config.constants.ci_fleet import CI_FLEET_DIRECTORY as CI_FLEET_DIRECTORY
+    from config.constants.ci_fleet import CI_FLEET_LOOP_NAME as CI_FLEET_LOOP_NAME
+    from config.constants.ci_fleet import CI_FLEET_MAX_FIXES as CI_FLEET_MAX_FIXES
+    from config.constants.ci_fleet import CI_FLEET_MAX_PARALLEL as CI_FLEET_MAX_PARALLEL
+    from config.constants.ci_fleet import CI_FLEET_MAX_REPOSITORIES as CI_FLEET_MAX_REPOSITORIES
+    from config.constants.ci_fleet import CI_FLEET_MIN_ALERT_SEVERITY as CI_FLEET_MIN_ALERT_SEVERITY
+    from config.constants.ci_fleet import CI_FLEET_REPORT_BUILDER as CI_FLEET_REPORT_BUILDER
+    from config.constants.ci_fleet import CI_FLEET_RETRY_HOURS as CI_FLEET_RETRY_HOURS
+    from config.constants.ci_fleet import CI_FLEET_SWEEP_SECONDS as CI_FLEET_SWEEP_SECONDS
     from config.constants.ci_repair import CI_REPAIR_CRON as CI_REPAIR_CRON
     from config.constants.ci_repair import CI_REPAIR_DIRECTORY as CI_REPAIR_DIRECTORY
     from config.constants.ci_repair import (

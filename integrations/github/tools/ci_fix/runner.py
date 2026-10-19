@@ -64,7 +64,12 @@ from integrations.github.tools.ci_fix.errors import (
     GitHubCiFixError,
 )
 from integrations.github.tools.ci_fix.resume import resumed_push
-from integrations.github.tools.ci_fix.ship import PushResult, checkout_target_branch, push_ci_fix
+from integrations.github.tools.ci_fix.ship import (
+    BranchDelivery,
+    PushResult,
+    checkout_target_branch,
+    push_ci_fix,
+)
 from integrations.github.tools.ci_fix.storage.attempts import (
     record_unsettled_merge,
     record_verification,
@@ -83,6 +88,7 @@ from integrations.github.tools.ci_fix.verification import (
 )
 from integrations.github.tools.ci_fix.worktree import (
     BranchWorktree,
+    checkout_branch_in_place,
     cleanup_branch_worktree,
     create_branch_checkout,
     create_branch_worktree,
@@ -255,13 +261,19 @@ def with_push_output(
         "changed_files": push.changed_files,
         "checks_state": verification.state.value,
         "check_names": list(verification.check_names),
+        "blocked_checks": list(verification.blocked_checks),
+        "pushed_onto_branch": push.onto_branch,
+        "pull_request_url": push.pull_request_url,
+        "pr_reason": push.pr_reason,
     }
     if verification.state is CheckState.PASSED:
+        reason = f" ({push.pr_reason})" if push.pr_reason else ""
+        shipped = f"opened {push.pull_request_url}{reason}, " if push.pull_request_url else ""
         return {
             **result,
             "response_text": (
                 f"Fixed failing CI for {target}, {_merge_phrase(output)}pushed {push.branch_name}, "
-                f"and all {checks_noun} passed."
+                f"{shipped}and all {checks_noun} passed."
             ),
         }
     if verification.state is CheckState.CONFLICTED:
@@ -415,7 +427,19 @@ def _merge_phrase(output: dict[str, Any]) -> str:
     return f"merged {base_branch} (resolved conflicts in {', '.join(resolved)}), "
 
 
-def _confirmation_prompt(ctx: CiFixContext) -> str:
+def _confirmation_prompt(
+    ctx: CiFixContext, *, delivery: BranchDelivery = BranchDelivery.REPAIR_BRANCH
+) -> str:
+    if ctx.is_branch_target and delivery is BranchDelivery.DIRECT:
+        return (
+            f"Fix failing CI for {ctx.target_label} in a fresh clone, committing the fix and "
+            f"pushing it straight onto {ctx.target_branch or ctx.head_branch}? [y/N] "
+        )
+    if ctx.is_branch_target and delivery is BranchDelivery.PULL_REQUEST:
+        return (
+            f"Fix failing CI for {ctx.target_label} in a fresh clone and open a pull request "
+            f"with the fix into {ctx.target_branch or ctx.head_branch}? [y/N] "
+        )
     if ctx.is_branch_target:
         return (
             f"Fix failing CI for {ctx.target_label} in an isolated checkout, "
@@ -452,11 +476,16 @@ def run_ci_fix(
     settle_seconds: int = DEFAULT_SETTLE_SECONDS,
     poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
     timer: PhaseTimer | None = None,
+    branch_delivery: BranchDelivery = BranchDelivery.REPAIR_BRANCH,
 ) -> dict[str, Any]:
     """Fix one PR's or branch's failing CI, push the repair, and verify its checks.
 
     ``timer`` receives the wall time of each phase (``context_gather``,
     ``checkout``, ``merge_base``, ``coding_agent``, ``push``, ``verify``).
+    ``branch_delivery`` (branch targets only): ``PULL_REQUEST`` and ``DIRECT``
+    make the fix on the branch in a fresh clone and open a pull request with it,
+    or push it onto the branch itself (a branch rule that requires pull requests
+    turns that into the pull request).
     """
     check_wait = {
         "registration_seconds": registration_seconds,
@@ -478,6 +507,15 @@ def run_ci_fix(
                 raise GitHubCiFixError(
                     ERR_INVALID_INPUT,
                     "Pass either a PR selector or a branch, not both; no push was made.",
+                )
+            lands_on_branch = branch_delivery is not BranchDelivery.REPAIR_BRANCH
+            if lands_on_branch and (not branch_name or not isolated_clone):
+                raise GitHubCiFixError(
+                    ERR_INVALID_INPUT,
+                    (
+                        "Landing a fix on a branch needs that branch and its owner/repo, "
+                        "and works only in a fresh clone; no push was made."
+                    ),
                 )
             with phases.phase("context_gather"):
                 if branch_name:
@@ -534,9 +572,15 @@ def run_ci_fix(
                     ERR_NO_FAILING_CHECKS, "No failing checks; no repair was needed.", ctx
                 )
             ensure_push_ready(github_token=github_token)
-            require_confirmation(confirm_fn, _confirmation_prompt(ctx))
+            require_confirmation(confirm_fn, _confirmation_prompt(ctx, delivery=branch_delivery))
             with phases.phase("checkout"):
-                if ctx.is_branch_target:
+                if ctx.is_branch_target and lands_on_branch:
+                    worktree = checkout_branch_in_place(
+                        ws, ctx, token=resolve_github_token(github_token)
+                    )
+                    run_workspace = worktree.path
+                    ensure_head_revision(run_workspace, ctx.head_sha)
+                elif ctx.is_branch_target:
                     token = resolve_github_token(github_token)
                     if not isolated_clone:
                         worktree = create_branch_worktree(ws, ctx, token=token)
@@ -577,6 +621,7 @@ def run_ci_fix(
                     github_token=github_token,
                     already_committed=merge is not None or committed,
                     recorded_through=merge.commit_sha if merge is not None else ctx.head_sha,
+                    delivery=branch_delivery,
                 )
         except GitHubCiFixError as exc:
             return push_error_output(output, _reported(ctx, exc, github_token))

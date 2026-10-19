@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from http import HTTPStatus
 from typing import Any
 
 from integrations.github.client import GitHubApiError, GitHubRestClient
@@ -43,6 +45,12 @@ MAX_REF_PAGES = 10
 #: Hard stop on check pages per head commit (100 checks each).
 MAX_CONTEXT_PAGES = 10
 _NOT_ACCESSIBLE = "Repository was not found or is not accessible with this token."
+#: GitHub answers these when a heavy multi-repository document runs past its time limit.
+_SPLIT_STATUSES = frozenset(
+    {HTTPStatus.BAD_GATEWAY, HTTPStatus.SERVICE_UNAVAILABLE, HTTPStatus.GATEWAY_TIMEOUT}
+)
+_ERROR_MAX_CHARS = 200
+_HTML_TAG = re.compile(r"<[^>]+>")
 
 Progress = Callable[[str], None]
 
@@ -188,6 +196,12 @@ def _branch_head(
     return head, notice
 
 
+def _error_line(exc: GitHubApiError) -> str:
+    """One readable line for a failed read; an HTML error page keeps only its text."""
+    text = " ".join(_HTML_TAG.sub(" ", str(exc)).split())
+    return text if len(text) <= _ERROR_MAX_CHARS else text[: _ERROR_MAX_CHARS - 1] + "…"
+
+
 def _failed(repo: RepoRef, error: str) -> RepoScanResult:
     return RepoScanResult(
         repo=repo.full_name, default_branch="", open_prs=0, branches_seen=0, error=error
@@ -321,7 +335,9 @@ def scan_batch(
     try:
         data, errors = run_query_with_errors(client, query, variables, tally=tally)
     except GitHubApiError as exc:
-        return BatchOutcome(results=tuple(_failed(repo, str(exc)) for repo in repos))
+        if len(repos) > 1 and exc.status_code in _SPLIT_STATUSES:
+            return _scan_one_by_one(client, repos, include_all_branches=include_all_branches)
+        return BatchOutcome(results=tuple(_failed(repo, _error_line(exc)) for repo in repos))
     results: list[RepoScanResult] = []
     for index, repo in enumerate(repos):
         alias = repo_alias(index)
@@ -336,6 +352,25 @@ def scan_batch(
         )
     return BatchOutcome(
         results=tuple(results), rate_limit_cost=tally.cost, rate_limit_remaining=tally.remaining
+    )
+
+
+def _scan_one_by_one(
+    client: GitHubRestClient, repos: Sequence[RepoRef], *, include_all_branches: bool
+) -> BatchOutcome:
+    """Rescan a batch GitHub timed out on, one repository per document, in parallel."""
+    with ThreadPoolExecutor(max_workers=min(len(repos), BATCH_SIZE)) as pool:
+        outcomes = list(
+            pool.map(
+                lambda repo: scan_batch(client, [repo], include_all_branches=include_all_branches),
+                repos,
+            )
+        )
+    remaining = [o.rate_limit_remaining for o in outcomes if o.rate_limit_remaining is not None]
+    return BatchOutcome(
+        results=tuple(result for outcome in outcomes for result in outcome.results),
+        rate_limit_cost=sum(outcome.rate_limit_cost for outcome in outcomes),
+        rate_limit_remaining=min(remaining) if remaining else None,
     )
 
 
