@@ -55,6 +55,13 @@ class VcsRepoScopeProvider(Protocol):
     ) -> tuple[tuple[str, ...], ...]:
         """Return every repository scope explicitly referenced in ``text``."""
 
+    def prewarm(self, resolved: Mapping[str, Any]) -> None:
+        """Load what :meth:`infer` reads remotely for ``resolved``, so a turn need not wait.
+
+        Best-effort and blocking: a host calls it off the input path. A provider
+        whose inference reads nothing remote does nothing.
+        """
+
 
 _vcs_repo_scope_providers: list[VcsRepoScopeProvider] = []
 
@@ -114,6 +121,12 @@ def enrich_resolved_with_repo_scopes(
     return out
 
 
+def prewarm_repo_scopes(resolved: Mapping[str, Any]) -> None:
+    """Let every registered provider load what its inference reads remotely."""
+    for provider in _vcs_repo_scope_providers:
+        provider.prewarm(resolved)
+
+
 def reset() -> None:
     """Clear registered repo-scope providers (tests)."""
     clear_vcs_repo_scope_providers()
@@ -123,5 +136,6 @@ __all__ = [
     "VcsRepoScopeProvider",
     "clear_vcs_repo_scope_providers",
     "enrich_resolved_with_repo_scopes",
+    "prewarm_repo_scopes",
     "register_vcs_repo_scope_provider",
 ]
