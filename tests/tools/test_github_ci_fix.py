@@ -22,6 +22,7 @@ from core.llm.types import ToolCall
 from core.tool.contracts import AgentToolContext, RegisteredTool
 from core.tool.execution import execute_tool_calls
 from integrations.coding_agent import CodingResult
+from integrations.git import PUSH_RULE_REJECTED, GitCommandError
 from integrations.github.tools.ci_fix.context import (
     CI_TARGET_BRANCH,
     CiFixContext,
@@ -384,6 +385,39 @@ def test_create_branch_checkout_reuses_an_isolated_clone(tmp_path: Path) -> None
         result.branch_name,
         "origin/main",
     ]
+
+
+def test_push_to_branch_lands_on_the_target_unless_a_branch_rule_refuses_it() -> None:
+    """A user who asked for main gets main; a protected main gets a repair branch and a reason."""
+    ctx = replace(_BRANCH_CTX, head_branch="main", head_sha="a" * 40)
+    pushed_main = MagicMock()
+    with (
+        patch("integrations.github.tools.ci_fix.ship.ensure_git_repo"),
+        patch("integrations.github.tools.ci_fix.ship.current_branch", return_value="main"),
+        patch(
+            "integrations.github.tools.ci_fix.ship.changed_since_baseline", return_value=["a.py"]
+        ),
+        patch("integrations.github.tools.ci_fix.ship.commit_paths"),
+        patch("integrations.github.tools.ci_fix.ship.head_sha", return_value="b" * 40),
+        patch("integrations.github.tools.ci_fix.ship.remote_branch_sha", return_value="a" * 40),
+        patch("integrations.github.tools.ci_fix.ship.save_prepared_push"),
+        patch("integrations.github.tools.ci_fix.ship.push_base_branch", pushed_main),
+        patch("integrations.github.tools.ci_fix.ship.create_branch") as create_branch,
+        patch("integrations.github.tools.ci_fix.ship.push_branch") as push_branch,
+    ):
+        direct = push_ci_fix(
+            "/w", ctx=ctx, result=CodingResult(success=True, summary="fix"), direct=True
+        )
+        pushed_main.side_effect = GitCommandError(PUSH_RULE_REJECTED, "protected")
+        refused = push_ci_fix(
+            "/w", ctx=ctx, result=CodingResult(success=True, summary="fix"), direct=True
+        )
+
+    assert (direct.branch_name, direct.note) == ("main", "")
+    assert refused.branch_name.startswith("opensre/ci-fix-main-")
+    assert "branch rule requires a pull request" in refused.note
+    create_branch.assert_called_once_with("/w", refused.branch_name, base_default="main")
+    push_branch.assert_called_once_with("/w", refused.branch_name, base_default="", token=None)
 
 
 def test_gather_ci_fix_context_ignores_cancelled_sibling_checks() -> None:

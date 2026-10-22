@@ -47,8 +47,17 @@ _INPUT_SCHEMA: dict[str, Any] = {
                 "Optional branch whose failing GitHub Actions checks should be fixed "
                 "(e.g. 'main'). Use only when the user asks to fix a branch's CI "
                 "itself; mutually exclusive with the PR selectors. OpenSRE pushes a "
-                "fresh repair branch from a linked worktree — never the protected "
-                "branch directly."
+                "fresh repair branch unless push_to_branch is true."
+            ),
+        },
+        "push_to_branch": {
+            "type": "boolean",
+            "description": (
+                "True only when the user explicitly asks to push the fix straight to "
+                "the named branch (e.g. 'push straight to main', 'commit directly to "
+                "main') or a remembered preference says so. Requires branch. The fix "
+                "is made in a fresh clone and never force-pushed; if a branch rule "
+                "requires a pull request, the tool pushes a repair branch and says why."
             ),
         },
         "workspace": {
@@ -109,11 +118,13 @@ def _action_scope(context: Any) -> Any:
     display_name="Fix GitHub CI",
     compact_description="Diagnose and repair failing GitHub CI, then push and verify the fix.",
     description=(
-        "Inspect failing GitHub Actions checks on a pull request or branch, run "
-        "an auto-detected coding agent with the failing log context, commit the "
-        "result, push the PR branch or a fresh repair branch from a linked "
-        "worktree, and wait for the new checks to finish. It refuses fork PR "
-        "branches and never pushes directly to protected branches such as main."
+        "Inspect failing GitHub Actions checks on a pull request or branch, fix "
+        "them with a coding agent given the failing log context (an installed CLI "
+        "such as Claude Code or Codex, else OpenSRE's built-in agent, so no setup "
+        "is needed), commit the result, push the PR branch or a fresh repair "
+        "branch, and wait for the new checks to finish. With push_to_branch=true "
+        "a branch target's fix is pushed straight onto that branch (e.g. main) "
+        "instead. It refuses fork PR branches."
     ),
     use_cases=[
         "Fix failing CI on a GitHub pull request and push to the PR branch",
@@ -121,6 +132,7 @@ def _action_scope(context: Any) -> Any:
         "Fix the CI failure for a PR URL",
         "Repair a failing GitHub Actions check on the current branch PR",
         "Fix failing CI on main and push a repair branch",
+        "Fix failing CI on main and push the fix straight to main",
     ],
     anti_examples=[
         "Creating or closing ordinary GitHub issues (use github_cli)",
@@ -144,6 +156,7 @@ def fix_github_pr_ci(
     branch: str | None = None,
     workspace: str | None = None,
     model: str | None = None,
+    push_to_branch: bool = False,
     github_token: str | None = None,
     context: Any = None,
     **_kwargs: Any,
@@ -158,6 +171,7 @@ def fix_github_pr_ci(
         workspace=workspace,
         model=model,
         github_token=github_token,
+        push_to_branch=push_to_branch,
         confirm_fn=_confirm_fn(context),
         console=_console(context),
     )

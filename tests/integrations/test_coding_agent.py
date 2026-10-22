@@ -48,6 +48,7 @@ def _fake_backends(
     claude: tuple[bool, str] = (False, "claude not installed"),
     codex: tuple[bool, str] = (False, "codex not installed"),
     cursor: tuple[bool, str] = (False, "cursor not installed"),
+    opensre: tuple[bool, str] = (False, "no LLM configured"),
 ) -> dict[str, tuple[MagicMock, MagicMock]]:
     """Backend table stand-ins keyed like ``_BACKENDS`` (run mock, verify mock)."""
     return {
@@ -55,6 +56,7 @@ def _fake_backends(
         "claude-code": (MagicMock(return_value=_OK), MagicMock(return_value=claude)),
         "codex": (MagicMock(return_value=_OK), MagicMock(return_value=codex)),
         "cursor": (MagicMock(return_value=_OK), MagicMock(return_value=cursor)),
+        "opensre": (MagicMock(return_value=_OK), MagicMock(return_value=opensre)),
     }
 
 
@@ -109,6 +111,20 @@ def test_auto_run_with_no_ready_backend_returns_error() -> None:
         result = run_coding_task("fix", workspace="/w", model=None, timeout_sec=60, provider="auto")
     assert result.success is False
     assert "No coding agent is ready" in (result.error or "")
+
+
+def test_auto_falls_back_to_the_built_in_agent_except_on_a_host_sandbox(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    table = _fake_backends(opensre=(True, "built-in agent on the openai model"))
+    with patch.dict(_BACKENDS, table):
+        result = run_coding_task("fix", workspace="/w", model=None, timeout_sec=60, provider="auto")
+        monkeypatch.setenv("CODING_AGENT_SANDBOX", "host")
+        sandboxed = verify_coding_agent("auto")
+    assert result.success is True
+    table["opensre"][0].assert_called_once()
+    # Without a sandbox of its own, the built-in agent runs only when pinned there.
+    assert sandboxed[0] is False
 
 
 def test_a_reuse_block_sweeps_once_keeps_no_miss_and_ends_with_the_block() -> None:

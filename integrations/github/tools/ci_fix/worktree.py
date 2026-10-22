@@ -90,8 +90,26 @@ def create_branch_checkout(
     would check out the repository a second time. Explicit user checkouts still
     use :func:`create_branch_worktree` to isolate their branch and local WIP.
     """
+    return _checkout_from_target(workspace, ctx, build_branch_name(ctx), "-b", token=token)
+
+
+def create_target_checkout(
+    workspace: str, ctx: CiFixContext, *, token: str | None = None
+) -> BranchWorktree:
+    """Check out the target branch itself in a run-owned clone, for a fix pushed straight to it.
+
+    The clone already has a local branch of that name (its default branch), so
+    it is reset to the fetched remote head rather than created.
+    """
+    target = ctx.target_branch or ctx.base_branch
+    return _checkout_from_target(workspace, ctx, target, "-B", token=token)
+
+
+def _checkout_from_target(
+    workspace: str, ctx: CiFixContext, branch_name: str, create_flag: str, *, token: str | None
+) -> BranchWorktree:
+    """Point *branch_name* at the fetched target branch and switch the clone to it."""
     target_branch = ctx.target_branch or ctx.base_branch
-    branch_name = build_branch_name(ctx)
     try:
         ensure_git_repo(workspace)
         fetch_remote_branch(workspace, target_branch, token=token)
@@ -99,7 +117,7 @@ def create_branch_checkout(
             [
                 "git",
                 "checkout",
-                "-b",
+                create_flag,
                 branch_name,
                 f"origin/{target_branch}",
             ],
@@ -175,4 +193,5 @@ __all__ = [
     "cleanup_branch_worktree",
     "create_branch_checkout",
     "create_branch_worktree",
+    "create_target_checkout",
 ]
