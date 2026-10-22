@@ -8,7 +8,7 @@ the change is legitimate: a compaction summary, a tool the conversation was show
 since, a turn replayed with less than it sent.
 
 The client therefore records that binding on each assistant message it receives
-(:data:`THINKING_BINDING_KEY`, from :func:`bind_thinking`) and, before every
+(``ANTHROPIC_THINKING_BINDING_KEY``, from :func:`bind_thinking`) and, before every
 request, drops the thinking blocks of the messages whose binding no longer holds.
 An append-only conversation keeps every block, so its cached prefix keeps
 matching; an edit costs the reasoning after it, never the request. Like the API,
@@ -22,11 +22,8 @@ import json
 from collections.abc import Sequence
 from typing import Any, Final
 
+from config.constants.llm import ANTHROPIC_THINKING_BINDING_KEY
 from core.llm.transports.sdk.anthropic_cache import request_block
-
-#: Internal marker on an assistant message: the conversation its thinking blocks
-#: are bound to, as ``{"prefix": <digest>, "after": <block id or "">}``.
-THINKING_BINDING_KEY: Final = "_opensre_thinking_binding"
 
 _THINKING_BLOCK_TYPES: Final = frozenset({"thinking", "redacted_thinking"})
 _INTERNAL_KEY_PREFIX: Final = "_opensre_"
@@ -107,7 +104,7 @@ def bind_thinking(
     for message in messages:
         blocks = _thinking_blocks(message)
         if blocks:
-            recorded = message.get(THINKING_BINDING_KEY)
+            recorded = message.get(ANTHROPIC_THINKING_BINDING_KEY)
             if recorded is None or _holds(recorded, prefix.hexdigest(), previous):
                 previous = _block_id(blocks[-1])
             else:
@@ -121,7 +118,6 @@ def bind_thinking(
 
 
 __all__ = [
-    "THINKING_BINDING_KEY",
     "bind_thinking",
     "carries_thinking",
     "is_thinking_block",

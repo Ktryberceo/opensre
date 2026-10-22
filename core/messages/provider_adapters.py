@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol
 
+from config.constants.llm import ANTHROPIC_THINKING_BINDING_KEY
 from core.llm.types import AgentLLMResponse, ToolCall
 from core.messages.runtime_message_types import ProviderMessage, RuntimeContent
 
@@ -139,9 +140,7 @@ class _AnthropicAdapter[LLMT: _RawAssistantClient](MessageAdapter[LLMT]):
 
     def client_markers(self) -> frozenset[str]:
         # The client checks each resent thinking block against its binding.
-        from core.llm.transports.sdk.anthropic_thinking import THINKING_BINDING_KEY
-
-        return frozenset({THINKING_BINDING_KEY})
+        return frozenset({ANTHROPIC_THINKING_BINDING_KEY})
 
 
 class _BedrockConverseAdapter[LLMT: _RawAssistantClient](MessageAdapter[LLMT]):

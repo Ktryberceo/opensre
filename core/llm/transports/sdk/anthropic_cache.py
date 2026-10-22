@@ -24,14 +24,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Final
 
+from config.constants.llm import ANTHROPIC_DEFER_LOADING_KEY
+
 #: Anthropic's 5-minute ephemeral cache. Written once, read by later requests
 #: whose prefix matches byte-for-byte.
 ANTHROPIC_CACHE_CONTROL: Final[dict[str, str]] = {"type": "ephemeral"}
-
-#: Tool-schema field that keeps a tool out of the prompt until a tool reference
-#: loads it (``anthropic_deferred_tools``). Such a tool sits outside the cached
-#: prefix and cannot carry a marker: the API rejects the request.
-DEFER_LOADING_KEY: Final = "defer_loading"
 
 
 def text_block(text: str) -> dict[str, Any]:
@@ -115,7 +112,7 @@ def tools_with_cache(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         (
             index
             for index in range(len(cached) - 1, -1, -1)
-            if cached[index].get(DEFER_LOADING_KEY) is not True
+            if cached[index].get(ANTHROPIC_DEFER_LOADING_KEY) is not True
         ),
         None,
     )
@@ -241,7 +238,6 @@ def _message_without_marker(message: Any) -> Any:
 __all__ = [
     "ANTHROPIC_CACHE_CONTROL",
     "BEDROCK_UNNAMED_REJECTION_SIGNALS",
-    "DEFER_LOADING_KEY",
     "cached_system",
     "is_cache_unsupported_error",
     "messages_with_cache",

@@ -14,6 +14,7 @@ import time
 from collections.abc import Callable, Sequence
 from typing import Any
 
+from config.constants.llm import ANTHROPIC_THINKING_BINDING_KEY
 from config.llm_models import DEFAULT_MAX_TOKENS
 from core.context_budget import strip_internal_message_markers
 from core.llm.shared.llm_retry import (
@@ -75,7 +76,6 @@ from core.llm.transports.sdk.anthropic_deferred_tools import (
     supports_deferred_tools as _supports_deferred_tools,
 )
 from core.llm.transports.sdk.anthropic_thinking import (
-    THINKING_BINDING_KEY,
     bind_thinking,
     carries_thinking,
     is_thinking_block,
@@ -462,7 +462,7 @@ class AnthropicAgentClient:
                 _sent, thinking_binding = bind_thinking(
                     request_messages, system=system, tools=request_tools
                 )
-            message_markers[THINKING_BINDING_KEY] = thinking_binding
+            message_markers[ANTHROPIC_THINKING_BINDING_KEY] = thinking_binding
 
         cache_read, cache_write = extract_cache_tokens(getattr(response, "usage", None))
         return AgentLLMResponse(

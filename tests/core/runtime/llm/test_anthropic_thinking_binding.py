@@ -13,7 +13,8 @@ from typing import Any
 
 import pytest
 
-from core.llm.transports.sdk.anthropic_thinking import THINKING_BINDING_KEY, bind_thinking
+from config.constants.llm import ANTHROPIC_THINKING_BINDING_KEY
+from core.llm.transports.sdk.anthropic_thinking import bind_thinking
 
 _SYSTEM = "You are OpenSRE."
 _TOOLS = [{"name": "logs", "description": "Fetch logs", "input_schema": {"type": "object"}}]
@@ -36,7 +37,7 @@ def _result(call_id: str, output: str) -> dict[str, Any]:
 def _answered(history: list[dict[str, Any]], reply: list[dict[str, Any]]) -> dict[str, Any]:
     """The assistant message the client records for ``reply`` to ``history``."""
     _sent, binding = bind_thinking(history, system=_SYSTEM, tools=_TOOLS)
-    return {"role": "assistant", "content": reply, THINKING_BINDING_KEY: binding}
+    return {"role": "assistant", "content": reply, ANTHROPIC_THINKING_BINDING_KEY: binding}
 
 
 def _conversation() -> list[dict[str, Any]]:

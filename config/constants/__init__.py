@@ -766,6 +766,12 @@ if TYPE_CHECKING:
         KUBECONFIG_PATH_ENV as KUBECONFIG_PATH_ENV,
     )
     from config.constants.llm import (
+        ANTHROPIC_DEFER_LOADING_KEY as ANTHROPIC_DEFER_LOADING_KEY,
+    )
+    from config.constants.llm import (
+        ANTHROPIC_THINKING_BINDING_KEY as ANTHROPIC_THINKING_BINDING_KEY,
+    )
+    from config.constants.llm import (
         AZURE_OPENAI_API_KEY_ENV as AZURE_OPENAI_API_KEY_ENV,
     )
     from config.constants.llm import (

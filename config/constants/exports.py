@@ -334,6 +334,8 @@ EXPORTS: dict[str, str] = {
     "KUBECONFIG_NAMESPACE_ENV": "kubernetes",
     "KUBECONFIG_PATH_ENV": "kubernetes",
     # llm
+    "ANTHROPIC_DEFER_LOADING_KEY": "llm",
+    "ANTHROPIC_THINKING_BINDING_KEY": "llm",
     "AZURE_OPENAI_API_KEY_ENV": "llm",
     "OPENAI_API_KEY_ENV": "llm",
     "OPENAI_BASE_URL_ENV": "llm",

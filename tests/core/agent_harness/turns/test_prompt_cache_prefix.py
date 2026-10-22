@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from rich.console import Console
 
 from config.constants import OPENSRE_MEMORY_DISABLED_ENV
+from config.constants.llm import ANTHROPIC_THINKING_BINDING_KEY
 from core.agent_harness import SessionCore
 from core.agent_harness.prompts.action.assemble import SESSION_CONTEXT_HEADER
 from core.agent_harness.session.lifecycle import SessionManager
@@ -32,7 +33,6 @@ from core.agent_harness.session.persistence.memory import InMemorySessionStore
 from core.agent_harness.tools.tool_provider import DefaultToolProvider
 from core.agent_harness.turns.headless_build import InMemoryHeadlessBuild
 from core.llm.transports.sdk.agent_clients import AnthropicAgentClient, OpenAIAgentClient
-from core.llm.transports.sdk.anthropic_thinking import THINKING_BINDING_KEY
 from tests.utils.anthropic_streams import FakeMessageStream
 from tests.utils.openai_streams import (
     FakeChunkStream,
@@ -414,7 +414,7 @@ def test_thinking_blocks_replay_with_their_turn_while_their_prefix_holds(rebuild
     for request in (found, last_of_turn_one, turn_two, turn_three):
         assert "sig-search" not in _dump(request["messages"])
     # The binding the client checks rides with the transcript, never on the wire.
-    assert not any(THINKING_BINDING_KEY in _dump(request) for request in sdk.requests)
+    assert not any(ANTHROPIC_THINKING_BINDING_KEY in _dump(request) for request in sdk.requests)
 
 
 @pytest.mark.parametrize("rebuild", [False, True], ids=["live_session", "rebuilt_from_log"])

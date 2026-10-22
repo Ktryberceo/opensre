@@ -27,11 +27,9 @@ import re
 from collections.abc import Sequence
 from typing import Any, Final
 
+from config.constants.llm import ANTHROPIC_DEFER_LOADING_KEY
 from config.constants.tool_discovery import TOOL_SEARCH_MATCHES_KEY, TOOL_SEARCH_NAME
-from core.llm.transports.sdk.anthropic_cache import (
-    BEDROCK_UNNAMED_REJECTION_SIGNALS,
-    DEFER_LOADING_KEY,
-)
+from core.llm.transports.sdk.anthropic_cache import BEDROCK_UNNAMED_REJECTION_SIGNALS
 
 # Tool search (and with it ``tool_reference``) needs an Anthropic model from
 # version 4.5 on; the Fable and Mythos families have it in every version.
@@ -44,7 +42,7 @@ _ALWAYS_SUPPORTED_FAMILIES: Final = frozenset({"fable", "mythos"})
 #: Substrings a provider 400 uses when the request failed *because of* deferred
 #: loading: the deferred field, the reference blocks, or the beta that enables them.
 _DEFERRED_TOOLS_UNSUPPORTED_SIGNALS: Final[tuple[str, ...]] = (
-    DEFER_LOADING_KEY,
+    ANTHROPIC_DEFER_LOADING_KEY,
     "tool_reference",
     "tool reference",
     "tool-search",
@@ -73,12 +71,12 @@ def supports_deferred_tools(model: str | None) -> bool:
 
 def deferred_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """``schema`` declared for loading by reference only."""
-    return {**schema, DEFER_LOADING_KEY: True}
+    return {**schema, ANTHROPIC_DEFER_LOADING_KEY: True}
 
 
 def is_deferred(schema: Any) -> bool:
     """Whether a tool schema is declared for loading by reference only."""
-    return isinstance(schema, dict) and schema.get(DEFER_LOADING_KEY) is True
+    return isinstance(schema, dict) and schema.get(ANTHROPIC_DEFER_LOADING_KEY) is True
 
 
 def deferred_tool_request(
