@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from config.constants.tool_discovery import (
     MODEL_ONLY_PRESENTATION_KEY,
+    REPLAY_WITH_HISTORY_KEY,
     TOOL_DISCOVERY_STATE_DENIED,
     TOOL_DISCOVERY_STATE_NO_MATCH,
     TOOL_DISCOVERY_STATE_TRANSPORT_FAILURE,
@@ -150,6 +151,11 @@ class ToolExecutionResult:
     def model_only(self) -> bool:
         """Whether presentation and persisted user replies must hide this result."""
         return self.metadata.get(MODEL_ONLY_PRESENTATION_KEY) is True
+
+    @property
+    def request_scoped(self) -> bool:
+        """Whether only the request that produced this result may see it; history drops it."""
+        return self.model_only and self.metadata.get(REPLAY_WITH_HISTORY_KEY) is not True
 
     def compat_payload(self) -> Any:
         """Return the historical raw payload shape used by old call sites."""

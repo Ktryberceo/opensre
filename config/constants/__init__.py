@@ -1541,6 +1541,12 @@ if TYPE_CHECKING:
         MODEL_ONLY_PRESENTATION_KEY as MODEL_ONLY_PRESENTATION_KEY,
     )
     from config.constants.tool_discovery import (
+        REPLAY_WITH_HISTORY_KEY as REPLAY_WITH_HISTORY_KEY,
+    )
+    from config.constants.tool_discovery import (
+        REQUEST_SCOPED_RESULTS_METADATA_KEY as REQUEST_SCOPED_RESULTS_METADATA_KEY,
+    )
+    from config.constants.tool_discovery import (
         SESSION_GOAL_CONTROL_TOOL_NAMES as SESSION_GOAL_CONTROL_TOOL_NAMES,
     )
     from config.constants.tool_discovery import (

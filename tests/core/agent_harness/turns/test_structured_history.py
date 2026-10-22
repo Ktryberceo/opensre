@@ -174,12 +174,15 @@ def test_a_follow_up_sees_the_earlier_tool_call_and_its_result() -> None:
     agent = InMemoryHeadlessBuild().agent(tools=_OneToolProvider(), llm_factory=lambda: llm)
 
     agent.dispatch("Is CI failing?")
+    first_turn = llm.requests[0]
     agent.dispatch("Rerun the one that failed")
 
     second_turn = llm.requests[-1]
     roles = [message["role"] for message in second_turn]
     assert roles == ["user", "assistant", "tool", "assistant", "user"]
-    assert second_turn[0]["content"] == "Is CI failing?"
+    # The earlier message replays exactly as it was sent, with its context.
+    assert second_turn[0]["content"] == first_turn[0]["content"]
+    assert second_turn[0]["content"].startswith("USER MESSAGE (literal): <<<Is CI failing?>>>")
     assert second_turn[1]["tool_calls"] == [{"id": "call_1", "name": "ci_runs"}]
     # The exact value the follow-up refers to arrives as the tool's own output.
     assert "9312" in str(second_turn[2]["results"][0]["output"])

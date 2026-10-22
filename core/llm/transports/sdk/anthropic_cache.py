@@ -1,9 +1,11 @@
-"""Anthropic prompt-cache breakpoint markers.
+"""Anthropic prompt-cache breakpoint markers and replay-stable content blocks.
 
 A leaf module: both the agent client and the plain messages client mark cache
 breakpoints, and neither imports the other. Anthropic caches the request prefix
 up to each ``cache_control`` marker, so a byte-stable prefix plus a marker turns
 resent input into cache reads (~0.1x input price) instead of full-price tokens.
+The block builders give a live assistant turn and its later replay one shape,
+so the history a request resends matches the prefix the provider cached.
 
 Marking a prefix shorter than the model's minimum cacheable length is safe: the
 request succeeds and simply is not cached, so callers do not need to measure
@@ -19,11 +21,57 @@ unsupported model works uncached instead of failing every call.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, Final
 
 #: Anthropic's 5-minute ephemeral cache. Written once, read by later requests
 #: whose prefix matches byte-for-byte.
 ANTHROPIC_CACHE_CONTROL: Final[dict[str, str]] = {"type": "ephemeral"}
+
+
+def text_block(text: str) -> dict[str, Any]:
+    """A text content block, in the one shape a live turn and its replay both send."""
+    return {"type": "text", "text": text}
+
+
+def tool_use_block(call_id: str, name: str, tool_input: Any) -> dict[str, Any]:
+    """A tool-use content block, in the one shape a live turn and its replay both send."""
+    return {"type": "tool_use", "id": call_id, "name": name, "input": tool_input}
+
+
+def _field(block: Any, name: str) -> Any:
+    return block.get(name) if isinstance(block, dict) else getattr(block, name, None)
+
+
+def replay_stable_blocks(blocks: Sequence[Any]) -> list[Any]:
+    """A response's content with its text and tool-use blocks in replay shape.
+
+    The SDK echoes a response block with every field the API set, in its own
+    field order, while a later turn rebuilds the same text and calls from the
+    recorded turn (:func:`text_block`, :func:`tool_use_block`). Sending both in
+    one shape keeps the cached prefix byte-identical from turn to turn. A block
+    a replay cannot rebuild (thinking, citations, server or programmatic tool
+    use) passes through unchanged.
+    """
+    stable: list[Any] = []
+    for block in blocks:
+        kind = _field(block, "type")
+        caller = _field(block, "caller")
+        if kind == "text" and not _field(block, "citations"):
+            stable.append(text_block(str(_field(block, "text") or "")))
+        elif (
+            kind == "tool_use"
+            and not _field(block, "toolset_name")
+            and (caller is None or _field(caller, "type") == "direct")
+        ):
+            stable.append(
+                tool_use_block(
+                    str(_field(block, "id")), str(_field(block, "name")), _field(block, "input")
+                )
+            )
+        else:
+            stable.append(block)
+    return stable
 
 
 def cached_system(system: str) -> list[dict[str, Any]]:
@@ -160,6 +208,9 @@ __all__ = [
     "cached_system",
     "is_cache_unsupported_error",
     "messages_with_cache",
+    "replay_stable_blocks",
     "strip_cache_markers",
+    "text_block",
+    "tool_use_block",
     "tools_with_cache",
 ]

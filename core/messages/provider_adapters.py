@@ -122,14 +122,15 @@ class _AnthropicAdapter[LLMT: _RawAssistantClient](MessageAdapter[LLMT]):
     def to_replayed_assistant_provider_message(
         self, content: str, tool_calls: list[ToolCall]
     ) -> ProviderMessage:
+        # The block builders the live turn's message used, so a replayed turn
+        # matches the prefix that request cached.
+        from core.llm.transports.sdk.anthropic_cache import text_block, tool_use_block
+
         if not tool_calls:
             return {"role": "assistant", "content": content}
         # Anthropic rejects empty text blocks, so text rides only when present.
-        blocks: list[dict[str, Any]] = [{"type": "text", "text": content}] if content else []
-        blocks.extend(
-            {"type": "tool_use", "id": tc.id, "name": tc.name, "input": tc.input}
-            for tc in tool_calls
-        )
+        blocks: list[dict[str, Any]] = [text_block(content)] if content else []
+        blocks.extend(tool_use_block(tc.id, tc.name, tc.input) for tc in tool_calls)
         return {"role": "assistant", "content": blocks}
 
 

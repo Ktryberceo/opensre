@@ -631,6 +631,8 @@ EXPORTS: dict[str, str] = {
     "INITIAL_TOOL_SCHEMA_TOKEN_LIMIT": "tool_discovery",
     "MAX_STAGNANT_DISCOVERY_ITERATIONS": "tool_discovery",
     "MODEL_ONLY_PRESENTATION_KEY": "tool_discovery",
+    "REPLAY_WITH_HISTORY_KEY": "tool_discovery",
+    "REQUEST_SCOPED_RESULTS_METADATA_KEY": "tool_discovery",
     "SESSION_GOAL_CONTROL_TOOL_NAMES": "tool_discovery",
     "TOOL_DISCOVERY_STATE_DENIED": "tool_discovery",
     "TOOL_DISCOVERY_STATE_MATCHED": "tool_discovery",

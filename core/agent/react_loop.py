@@ -26,6 +26,7 @@ from config.constants.tool_discovery import (
     DISCOVERY_PROGRESS_KEY,
     MAX_STAGNANT_DISCOVERY_ITERATIONS,
     MODEL_ONLY_PRESENTATION_KEY,
+    REQUEST_SCOPED_RESULTS_METADATA_KEY,
 )
 from config.llm_models import DEFAULT_MAX_TOKENS
 from core.agent.cancel import tool_resources_cancel_requested
@@ -821,12 +822,15 @@ class ReactLoop[RuntimeToolT: RuntimeTool]:
         model_only_indices = tuple(
             index for index, result in enumerate(results) if result.model_only
         )
-        if model_only_indices:
+        request_scoped_indices = tuple(
+            index for index in model_only_indices if results[index].request_scoped
+        )
+        if request_scoped_indices:
             tool_result_message = replace(
                 tool_result_message,
                 metadata={
                     **tool_result_message.metadata,
-                    "model_only_result_indices": model_only_indices,
+                    REQUEST_SCOPED_RESULTS_METADATA_KEY: request_scoped_indices,
                 },
             )
         self._messages.append(tool_result_message)

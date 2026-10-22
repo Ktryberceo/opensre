@@ -56,6 +56,9 @@ from core.llm.transports.sdk.anthropic_cache import (
     messages_with_cache as _anthropic_messages_with_cache,
 )
 from core.llm.transports.sdk.anthropic_cache import (
+    replay_stable_blocks as _anthropic_replay_stable_blocks,
+)
+from core.llm.transports.sdk.anthropic_cache import (
     tools_with_cache as _anthropic_tools_with_cache,
 )
 from core.llm.transports.sdk.request_headers import (
@@ -445,8 +448,15 @@ class AnthropicAgentClient:
 
     @staticmethod
     def build_assistant_message(raw_content: Any) -> dict[str, Any]:
-        """Build the assistant message preserving full Anthropic content blocks."""
-        return {"role": "assistant", "content": raw_content}
+        """Build the assistant message preserving full Anthropic content blocks.
+
+        Text and tool-use blocks take the shape a later turn's replay rebuilds
+        them in, so the history it resends matches this request's cached prefix;
+        every other block (thinking, server tools) is echoed as the API sent it.
+        """
+        if not isinstance(raw_content, list):
+            return {"role": "assistant", "content": raw_content}
+        return {"role": "assistant", "content": _anthropic_replay_stable_blocks(raw_content)}
 
     def _authentication_error_message(self) -> str:
         return f"{self.provider_name} authentication failed. {self.auth_error_hint}"

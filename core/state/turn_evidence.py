@@ -19,8 +19,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-#: The user's message for the turn (clean text, no per-turn context blocks).
+#: The user's message for the turn: ``text`` is the clean text; ``sent`` (when
+#: present) is the message exactly as the model received it, wrapped with the
+#: turn's context, which replay sends again byte for byte; ``context_digest``
+#: (when present) fingerprints the session-context section that message carried.
 ITEM_USER = "user"
+#: Key of an ``ITEM_USER`` item holding the message exactly as the model received it.
+USER_SENT_KEY = "sent"
+#: Key of an ``ITEM_USER`` item fingerprinting the session context its message carried.
+USER_CONTEXT_DIGEST_KEY = "context_digest"
 #: One assistant message: text and the tool calls it requested, if any.
 ITEM_ASSISTANT = "assistant"
 #: The results of the preceding assistant message's tool calls, in call order.
@@ -57,6 +64,12 @@ class TurnEvidence:
     #: (a bare "yes" becomes the offer it accepted). The session log keeps the
     #: typed form, so a restored transcript matches on this instead.
     typed_text: str = ""
+    #: The tool list the conversation had been shown when the turn ended
+    #: (:class:`~core.state.ShownTools`), so a session rebuilt from its log —
+    #: as the gateway does for every message — keeps each tool in place.
+    shown_tools: tuple[str, ...] = ()
+    #: Of ``shown_tools``, the tools shown with their full description.
+    full_tools: tuple[str, ...] = ()
 
     @property
     def has_tool_activity(self) -> bool:
@@ -67,7 +80,7 @@ class TurnEvidence:
         """Characters the turn adds when replayed (text, arguments and results)."""
         total = 0
         for item in self.items:
-            total += len(str(item.get("text") or ""))
+            total += len(str(item.get(USER_SENT_KEY) or item.get("text") or ""))
             for call in item.get("tool_calls") or ():
                 total += len(str(call.get("name") or "")) + len(str(call.get("input") or ""))
             for result in item.get("results") or ():
@@ -83,6 +96,9 @@ class TurnEvidence:
         }
         if self.typed_text:
             record["typed_text"] = self.typed_text
+        if self.shown_tools:
+            record["shown_tools"] = list(self.shown_tools)
+            record["full_tools"] = list(self.full_tools)
         return record
 
     def answers(self, user_text: str) -> bool:
@@ -114,7 +130,16 @@ class TurnEvidence:
             assistant_text=assistant_text,
             items=items,
             typed_text=typed_text if isinstance(typed_text, str) else "",
+            shown_tools=_names(payload.get("shown_tools")),
+            full_tools=_names(payload.get("full_tools")),
         )
+
+
+def _names(value: Any) -> tuple[str, ...]:
+    """A persisted list of tool names; empty when it is not one."""
+    if not isinstance(value, list):
+        return ()
+    return tuple(name for name in value if isinstance(name, str))
 
 
 def match_turn_evidence(
@@ -161,6 +186,8 @@ __all__ = [
     "ITEM_ASSISTANT",
     "ITEM_TOOL_RESULTS",
     "ITEM_USER",
+    "USER_CONTEXT_DIGEST_KEY",
+    "USER_SENT_KEY",
     "TurnEvidence",
     "cap_text",
     "match_turn_evidence",
