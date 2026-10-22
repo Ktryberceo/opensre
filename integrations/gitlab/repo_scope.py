@@ -238,9 +238,11 @@ class _GitlabVcsRepoScopeProvider:
         self,
         *,
         text: str,
+        role: str,
         env: Mapping[str, str] | None,
     ) -> tuple[tuple[str, ...], ...]:
-        """Return all GitLab repositories explicitly named in ``text``."""
+        """Return all GitLab repositories named in ``text``: URLs and ``gitlab:`` only, any role."""
+        _ = role
         env_map = env if env is not None else os.environ
         return tuple(
             tuple(scope)

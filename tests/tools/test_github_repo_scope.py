@@ -56,6 +56,21 @@ def test_parse_github_repository_reference_rejects_paths() -> None:
     assert parse_github_repository_reference("cli/interactive_shell/chat") is None
 
 
+def test_a_reference_holds_only_what_github_allows_in_a_name() -> None:
+    """``Homepage = "https://github.com/Tracer-Cloud/opensre"`` was remembered as ``opensre"``."""
+    text = (
+        'Homepage = "https://github.com/Tracer-Cloud/opensre"\n'
+        "See [the API](https://github.com/acme/api). Mirrored at docs.example.com/api.\n"
+        "Please look at acme/worker."
+    )
+
+    assert find_github_repository_references(text) == (
+        ("Tracer-Cloud", "opensre"),
+        ("acme", "api"),
+        ("acme", "worker"),
+    )
+
+
 def test_split_repo_full_name() -> None:
     assert split_repo_full_name("Tracer-Cloud/opensre.git") == ("Tracer-Cloud", "opensre")
     assert split_repo_full_name("owner-only") == ("", "")

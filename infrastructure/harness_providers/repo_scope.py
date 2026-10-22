@@ -51,9 +51,14 @@ class VcsRepoScopeProvider(Protocol):
         self,
         *,
         text: str,
+        role: str,
         env: Mapping[str, str] | None,
     ) -> tuple[tuple[str, ...], ...]:
-        """Return every repository scope explicitly referenced in ``text``."""
+        """Return every repository scope explicitly referenced in ``text``.
+
+        ``role`` is who wrote ``text``, as in ``conversation_messages``; an
+        assistant message also carries the output of the tools it ran.
+        """
 
 
 _vcs_repo_scope_providers: list[VcsRepoScopeProvider] = []
@@ -85,12 +90,9 @@ def enrich_resolved_with_repo_scopes(
     out = dict(resolved)
     for provider in _vcs_repo_scope_providers:
         if remember_scope is not None:
-            reference_texts = [
-                *(content for _role, content in conversation_messages or ()),
-                message,
-            ]
-            for text in reference_texts:
-                for referenced_scope in provider.referenced_scopes(text=text, env=env):
+            reference_texts = [*(conversation_messages or ()), ("user", message)]
+            for role, text in reference_texts:
+                for referenced_scope in provider.referenced_scopes(text=text, role=role, env=env):
                     remember_scope(
                         provider.vendor,
                         provider.repository_key(referenced_scope),
