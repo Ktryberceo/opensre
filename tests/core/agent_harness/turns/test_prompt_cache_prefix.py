@@ -137,6 +137,39 @@ def _rebuilt_from_log(session: SessionCore) -> SessionCore:
     return SessionManager(store=session.store).restore_context(rebuilt, data)
 
 
+def _three_turns(model: str, *, rebuild: bool) -> list[dict[str, Any]]:
+    """The requests of three turns; the first reveals ``memory_remember`` with tool search and calls it.
+
+    With ``rebuild`` the session is restored from its log before each next
+    turn, as the gateway does for every message.
+    """
+    sdk = _ScriptedAnthropic(
+        [
+            _tool_use("toolu_01", "tool_search", {"names": ["memory_remember"]}),
+            _tool_use("toolu_02", "memory_remember", _REMEMBER),
+            _text("Saved: payments deploys on Tuesdays."),
+            _text("Payments deploys on Tuesdays."),
+            _text("Anytime."),
+        ]
+    )
+    session = SessionCore(store=InMemorySessionStore())
+    agent = InMemoryHeadlessBuild(session=session).agent(
+        tools=DefaultToolProvider(session, Console(file=StringIO(), force_terminal=False)),
+        llm_factory=lambda: AnthropicAgentClient(model=model, client=sdk),
+    )
+
+    for message in (
+        "Remember that payments deploys every Tuesday.",
+        "When does payments deploy?",
+        "Thanks!",
+    ):
+        agent.dispatch(message)
+        if rebuild:
+            session = _rebuilt_from_log(session)
+            agent.bind_session(session)
+    return sdk.requests
+
+
 @pytest.fixture(autouse=True)
 def _memory_on(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv(OPENSRE_MEMORY_DISABLED_ENV, raising=False)
@@ -152,34 +185,12 @@ def test_the_next_turn_repeats_the_previous_request_byte_for_byte(rebuild: bool)
     its context, the tool calls and results, the tools — byte for byte, and
     carry the changed context in its own new message instead. The gateway
     rebuilds the session from its log for every message, so the same must hold
-    for a session restored between turns.
+    for a session restored between turns. The model here cannot load tools by
+    reference, so the reveal grows the tool list (see the next test).
     """
-    sdk = _ScriptedAnthropic(
-        [
-            _tool_use("toolu_01", "tool_search", {"names": ["memory_remember"]}),
-            _tool_use("toolu_02", "memory_remember", _REMEMBER),
-            _text("Saved: payments deploys on Tuesdays."),
-            _text("Payments deploys on Tuesdays."),
-            _text("Anytime."),
-        ]
+    first, _found, last_of_turn_one, turn_two, turn_three = _three_turns(
+        "claude-test", rebuild=rebuild
     )
-    session = SessionCore(store=InMemorySessionStore())
-    agent = InMemoryHeadlessBuild(session=session).agent(
-        tools=DefaultToolProvider(session, Console(file=StringIO(), force_terminal=False)),
-        llm_factory=lambda: AnthropicAgentClient(model="claude-test", client=sdk),
-    )
-
-    for message in (
-        "Remember that payments deploys every Tuesday.",
-        "When does payments deploy?",
-        "Thanks!",
-    ):
-        agent.dispatch(message)
-        if rebuild:
-            session = _rebuilt_from_log(session)
-            agent.bind_session(session)
-
-    first, _found, last_of_turn_one, turn_two, turn_three = sdk.requests
     _assert_extends(last_of_turn_one, turn_two)
     _assert_extends(turn_two, turn_three)
     # Session context rides in the conversation, never in the cached system prompt.
@@ -193,3 +204,26 @@ def test_the_next_turn_repeats_the_previous_request_byte_for_byte(rebuild: bool)
     # The tool tool search revealed stays visible after its turn.
     assert "memory_remember" not in {tool["name"] for tool in first["tools"]}
     assert "memory_remember" in {tool["name"] for tool in turn_two["tools"]}
+
+
+@pytest.mark.parametrize("rebuild", [False, True], ids=["live_session", "rebuilt_from_log"])
+def test_a_tool_search_reveal_keeps_the_request_prefix_byte_for_byte(rebuild: bool) -> None:
+    """A model that loads tools by reference gets a reveal as new conversation, not new tools.
+
+    Every catalog tool the conversation was not shown is declared deferred from
+    the first request on, and the search result references the tool it
+    revealed, so the request right after the reveal repeats the one before it
+    byte for byte — and so does every later request, live or restored from the
+    log. Anthropic renders tools first: a tool added mid-turn re-priced the
+    whole prompt.
+    """
+    requests = _three_turns("claude-opus-4-7", rebuild=rebuild)
+
+    for previous, current in itertools.pairwise(requests):
+        _assert_extends(previous, current)
+    first, found = requests[0], requests[1]
+    deferred = {tool["name"] for tool in first["tools"] if tool.get("defer_loading")}
+    assert "memory_remember" in deferred
+    assert "tool_search" not in deferred
+    (search_result,) = found["messages"][-1]["content"]
+    assert {"type": "tool_reference", "tool_name": "memory_remember"} in search_result["content"]

@@ -391,6 +391,12 @@ it). Pinned by ``tests/core/agent_harness/turns/test_prompt_cache_prefix.py``:
 - The tool list is append-only per conversation (``core.state.ShownTools``):
   tools keep their position and first-shown description, a search's reveals stay
   visible (so its result replays), new tools join at the end.
+- A client that loads tools by reference (``deferred_tool_schemas``; Anthropic
+  models from version 4.5 on, ``anthropic_deferred_tools``) also declares the rest of the
+  catalog deferred from the first request (``ProgressiveToolCatalog.deferred``),
+  and each ``tool_search`` result references what it revealed, so a reveal does
+  not change ``tools`` even within a turn. A 400 that blames it turns it off for
+  the client's lifetime. Other providers get the list above unchanged.
 - The memory index is a pure function of the memory files; usage never orders it. ``record_conversation_turn``
 stores a turn's ``TurnEvidence`` beside its ``(user, assistant)`` text pair and
 appends it to the session log as a ``turn_evidence`` record; ``restore_context``

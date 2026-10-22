@@ -28,6 +28,11 @@ from typing import Any, Final
 #: whose prefix matches byte-for-byte.
 ANTHROPIC_CACHE_CONTROL: Final[dict[str, str]] = {"type": "ephemeral"}
 
+#: Tool-schema field that keeps a tool out of the prompt until a tool reference
+#: loads it (``anthropic_deferred_tools``). Such a tool sits outside the cached
+#: prefix and cannot carry a marker: the API rejects the request.
+DEFER_LOADING_KEY: Final = "defer_loading"
+
 
 def text_block(text: str) -> dict[str, Any]:
     """A text content block, in the one shape a live turn and its replay both send."""
@@ -86,11 +91,20 @@ def cached_system(system: str) -> list[dict[str, Any]]:
 
 
 def tools_with_cache(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Mark the last tool schema, caching the whole tool block before it."""
+    """Mark the last tool loaded up front, caching the whole tool block before it."""
     if not tools:
         return tools
     cached = [dict(tool) for tool in tools]
-    cached[-1] = {**cached[-1], "cache_control": dict(ANTHROPIC_CACHE_CONTROL)}
+    last = next(
+        (
+            index
+            for index in range(len(cached) - 1, -1, -1)
+            if cached[index].get(DEFER_LOADING_KEY) is not True
+        ),
+        None,
+    )
+    if last is not None:
+        cached[last] = {**cached[last], "cache_control": dict(ANTHROPIC_CACHE_CONTROL)}
     return cached
 
 
@@ -128,6 +142,15 @@ def messages_with_cache(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [*messages[:-1], {**last, "content": marked_content}]
 
 
+#: Bedrock's ValidationException often rejects a request without naming the
+#: offending field, so a fallback keyed on a feature has to count this generic
+#: wording as a signal too. Matched only on a 400, where the request is already
+#: failing.
+BEDROCK_UNNAMED_REJECTION_SIGNALS: Final[tuple[str, ...]] = (
+    "does not support the requested feature",
+    "invalid request body",
+)
+
 #: Substrings a provider 400 uses when the request failed *because of* the
 #: cache markers: Anthropic names the offending ``cache_control`` field,
 #: Bedrock's Converse-era wording says "cachePoint" / "prompt caching".
@@ -136,11 +159,7 @@ _CACHE_UNSUPPORTED_SIGNALS: Final[tuple[str, ...]] = (
     "cachepoint",
     "prompt caching",
     "prompt cache",
-    # Bedrock's ValidationException often rejects the request without naming the
-    # offending field, so the generic wording has to count as a signal too. These
-    # are matched only on a 400, where the request is already failing.
-    "does not support the requested feature",
-    "invalid request body",
+    *BEDROCK_UNNAMED_REJECTION_SIGNALS,
 )
 
 
@@ -205,6 +224,8 @@ def _message_without_marker(message: Any) -> Any:
 
 __all__ = [
     "ANTHROPIC_CACHE_CONTROL",
+    "BEDROCK_UNNAMED_REJECTION_SIGNALS",
+    "DEFER_LOADING_KEY",
     "cached_system",
     "is_cache_unsupported_error",
     "messages_with_cache",

@@ -642,6 +642,7 @@ EXPORTS: dict[str, str] = {
     "TOOL_DISCOVERY_STATE_TRANSPORT_FAILURE": "tool_discovery",
     "TOOL_FAILURE_STATE_KEY": "tool_discovery",
     "TOOL_FAILURE_STATES": "tool_discovery",
+    "TOOL_SEARCH_MATCHES_KEY": "tool_discovery",
     "TOOL_SEARCH_MAX_RESULTS": "tool_discovery",
     "TOOL_SEARCH_NAME": "tool_discovery",
     # tracer

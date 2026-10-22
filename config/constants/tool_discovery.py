@@ -6,6 +6,10 @@ TOOL_SEARCH_MAX_RESULTS = 8
 MAX_STAGNANT_DISCOVERY_ITERATIONS = 3
 
 TOOL_SEARCH_NAME = "tool_search"
+#: Key of a tool-search result's payload listing the tools it found, each a
+#: mapping with the tool's ``name``. Providers that load a tool by reference
+#: read it to know which tools the result makes available.
+TOOL_SEARCH_MATCHES_KEY = "matches"
 MODEL_ONLY_PRESENTATION_KEY = "model_only"
 #: Result metadata: a model-only result that stays true after its request (the
 #: catalog keeps the tools a search revealed), so history replays it.
@@ -84,6 +88,7 @@ __all__ = [
     "TOOL_DISCOVERY_STATE_TRANSPORT_FAILURE",
     "TOOL_FAILURE_STATE_KEY",
     "TOOL_FAILURE_STATES",
+    "TOOL_SEARCH_MATCHES_KEY",
     "TOOL_SEARCH_MAX_RESULTS",
     "TOOL_SEARCH_NAME",
 ]

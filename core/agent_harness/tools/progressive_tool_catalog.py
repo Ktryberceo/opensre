@@ -3,7 +3,10 @@
 Tool definitions open the request prefix the provider caches, so the visible
 list is append-only for the conversation (:class:`~core.state.ShownTools`): a
 tool keeps the position and the description it was first shown with, tools a
-search reveals stay visible on later turns, and new tools join at the end.
+search reveals stay visible on later turns, and new tools join at the end. A
+provider that loads tools by reference declares the rest of the catalog up
+front instead (:meth:`ProgressiveToolCatalog.deferred`) and loads a reveal from
+the search result, so the declared list does not change at all.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from config.constants.tool_discovery import (
     SESSION_GOAL_CONTROL_TOOL_NAMES,
     TOOL_DISCOVERY_STATE_MATCHED,
     TOOL_DISCOVERY_STATE_NO_MATCH,
+    TOOL_SEARCH_MATCHES_KEY,
     TOOL_SEARCH_MAX_RESULTS,
     TOOL_SEARCH_NAME,
 )
@@ -90,7 +94,7 @@ def _result(payload: dict[str, Any], *, progress: bool) -> ToolExecutionResult:
             DISCOVERY_PROGRESS_KEY: progress,
             DISCOVERY_DETAIL_KEYS_KEY: tuple(
                 str(match.get("name"))
-                for match in payload.get("matches", ())
+                for match in payload.get(TOOL_SEARCH_MATCHES_KEY, ())
                 if isinstance(match, dict) and match.get("name")
             ),
         },
@@ -121,6 +125,7 @@ class ProgressiveToolCatalog:
         self._shown = shown if isinstance(shown, ShownTools) else ShownTools()
         self._last_key: tuple[Any, ...] | None = None
         self._snapshot: tuple[RegisteredTool, ...] = ()
+        self._deferred: tuple[RegisteredTool, ...] = ()
         self._discovery_tool = RegisteredTool(
             name=TOOL_SEARCH_NAME,
             description=(
@@ -180,7 +185,21 @@ class ProgressiveToolCatalog:
 
         self._last_key = key
         self._snapshot = tuple(self._view(name, by_name) for name in names)
+        up_front = {name for name in names if name not in self._shown.full}
+        self._deferred = tuple(tool for tool in full if tool.name not in up_front)
         return self._snapshot
+
+    def deferred(self) -> tuple[RegisteredTool, ...]:
+        """Catalog tools the conversation was not shown up front, for loading by reference.
+
+        A provider that loads a tool only where a tool search result references
+        it declares these from the first request on, so a reveal leaves the
+        declared list as it was. They are the hidden tools and the tools a
+        search revealed, in catalog order and with their full description: the
+        view a search reveals them with.
+        """
+        self.snapshot()
+        return self._deferred
 
     def _visible_names(self, by_name: dict[str, RegisteredTool]) -> list[str]:
         """The conversation's tool list: tools already shown, in place, then new ones.
@@ -282,7 +301,7 @@ class ProgressiveToolCatalog:
             "state": state,
             "error_kind": None if unique else state,
             "query": clean_query,
-            "matches": [
+            TOOL_SEARCH_MATCHES_KEY: [
                 {
                     "name": tool.name,
                     "description": tool.description,

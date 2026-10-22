@@ -1572,6 +1572,9 @@ if TYPE_CHECKING:
     )
     from config.constants.tool_discovery import TOOL_FAILURE_STATES as TOOL_FAILURE_STATES
     from config.constants.tool_discovery import (
+        TOOL_SEARCH_MATCHES_KEY as TOOL_SEARCH_MATCHES_KEY,
+    )
+    from config.constants.tool_discovery import (
         TOOL_SEARCH_MAX_RESULTS as TOOL_SEARCH_MAX_RESULTS,
     )
     from config.constants.tool_discovery import TOOL_SEARCH_NAME as TOOL_SEARCH_NAME

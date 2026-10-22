@@ -61,6 +61,18 @@ from core.llm.transports.sdk.anthropic_cache import (
 from core.llm.transports.sdk.anthropic_cache import (
     tools_with_cache as _anthropic_tools_with_cache,
 )
+from core.llm.transports.sdk.anthropic_deferred_tools import (
+    deferred_schema as _anthropic_deferred_schema,
+)
+from core.llm.transports.sdk.anthropic_deferred_tools import (
+    deferred_tool_request as _anthropic_deferred_tool_request,
+)
+from core.llm.transports.sdk.anthropic_deferred_tools import (
+    is_deferred_tools_unsupported_error as _is_deferred_tools_unsupported_error,
+)
+from core.llm.transports.sdk.anthropic_deferred_tools import (
+    supports_deferred_tools as _supports_deferred_tools,
+)
 from core.llm.transports.sdk.request_headers import (
     RequestHeaders,
     http_client_with_request_headers,
@@ -102,8 +114,8 @@ def _anthropic_tool_schema(tool: Any) -> dict[str, Any]:
 
 
 # Anthropic prompt-caching breakpoint (ephemeral, 5-minute TTL by default).
-# Prefix match order is tools → system → messages; mark the last tool and the
-# system block so ReAct iterations can reuse the stable prefix.
+# Prefix match order is tools → system → messages; mark the last tool loaded up
+# front and the system block so ReAct iterations can reuse the stable prefix.
 class AnthropicAgentClient:
     """Anthropic client with native tool-calling for the agent loop."""
 
@@ -117,6 +129,12 @@ class AnthropicAgentClient:
     # Responses stream by default. Flipped the same way when the provider
     # refuses the streaming endpoint itself (see ``_streaming_refused``).
     _streaming_enabled = True
+    # Best-effort deferred tool loading (``anthropic_deferred_tools``), same
+    # lifecycle: off for the client's lifetime after a 400 that blames it.
+    _deferred_tools_enabled = True
+    # ``anthropic-beta`` value a platform needs before it accepts deferred
+    # tools and tool references; the first-party API needs none.
+    _deferred_tools_beta: str | None = None
 
     def __init__(
         self,
@@ -160,6 +178,17 @@ class AnthropicAgentClient:
 
     def tool_schemas(self, tools: Sequence[SchemaDescribedTool]) -> list[dict[str, Any]]:
         return [_anthropic_tool_schema(t) for t in tools]
+
+    def deferred_tool_schemas(self, tools: Sequence[SchemaDescribedTool]) -> list[dict[str, Any]]:
+        """Declarations of ``tools`` the model loads only when a tool search result references them.
+
+        Appended after :meth:`tool_schemas` for the tools the conversation was
+        not shown up front. Empty when this model cannot load tools by
+        reference or the provider rejected it, so the request keeps its shape.
+        """
+        if not (self._deferred_tools_enabled and _supports_deferred_tools(self._model)):
+            return []
+        return [_anthropic_deferred_schema(_anthropic_tool_schema(t)) for t in tools]
 
     def describe_image(
         self,
@@ -219,7 +248,11 @@ class AnthropicAgentClient:
 
         cache = self._cache_markers_enabled
         stream = self._streaming_enabled
-        clean_messages = strip_internal_message_markers(messages)
+        clean_messages, request_tools, deferred = _anthropic_deferred_tool_request(
+            strip_internal_message_markers(messages),
+            tools or [],
+            enabled=self._deferred_tools_enabled,
+        )
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
@@ -227,8 +260,10 @@ class AnthropicAgentClient:
         }
         if system:
             kwargs["system"] = _anthropic_cached_system(system) if cache else system
-        if tools:
-            kwargs["tools"] = _anthropic_tools_with_cache(tools) if cache else tools
+        if request_tools:
+            kwargs["tools"] = _anthropic_tools_with_cache(request_tools) if cache else request_tools
+        if deferred and self._deferred_tools_beta:
+            kwargs["extra_headers"] = {"anthropic-beta": self._deferred_tools_beta}
 
         backoff = _RETRY_INITIAL_BACKOFF_SEC
         last_err: Exception | None = None
@@ -268,6 +303,23 @@ class AnthropicAgentClient:
                 # distinguish credit exhaustion (fatal) from real schema
                 # errors before wrapping into a generic RuntimeError.
                 maybe_raise_credit_exhausted(self.provider_name, err)
+                if deferred and _is_deferred_tools_unsupported_error(err):
+                    # Same keying as the cache fallback below; checked first
+                    # because every model that defers tools also caches.
+                    self._deferred_tools_enabled = False
+                    logger.warning(
+                        "%s model '%s' rejected deferred tool loading; retrying with every "
+                        "revealed tool loaded up front (a tool search re-prices the prompt cache).",
+                        self.provider_name,
+                        self._model,
+                    )
+                    return self.invoke(
+                        messages,
+                        system=system,
+                        tools=tools,
+                        on_text_delta=on_text_delta,
+                        should_stop=should_stop,
+                    )
                 if cache and _is_cache_unsupported_error(err):
                     # Keyed on what *this* request carried, not the shared
                     # flag: a concurrent turn may already have cleared it, and
@@ -479,6 +531,9 @@ class BedrockAgentClient(AnthropicAgentClient):
         "Check AWS credentials (for example AWS_PROFILE, AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY, "
         "or instance role) and AWS_REGION/AWS_DEFAULT_REGION."
     )
+    # Bedrock InvokeModel accepts deferred tools and tool references only
+    # under this beta; the SDK moves the header into the body's anthropic_beta.
+    _deferred_tools_beta = "tool-search-tool-2025-10-19"
 
     def __init__(self, model: str, max_tokens: int = DEFAULT_MAX_TOKENS) -> None:
         from anthropic import AnthropicBedrock

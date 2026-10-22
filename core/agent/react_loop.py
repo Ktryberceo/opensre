@@ -262,6 +262,7 @@ class ReactLoop[RuntimeToolT: RuntimeTool]:
         )
         self._runtime_tools = list(host._filter_tools(initial_tools))
         self._tool_schemas = self._llm.tool_schemas(self._runtime_tools)
+        self._deferred_tool_schemas = self._declare_deferred_tools()
         max_output_tokens = getattr(self._llm, "_max_tokens", DEFAULT_MAX_TOKENS)
         if not isinstance(max_output_tokens, int):
             max_output_tokens = DEFAULT_MAX_TOKENS
@@ -374,8 +375,24 @@ class ReactLoop[RuntimeToolT: RuntimeTool]:
         self._catalog_snapshot = snapshot
         self._runtime_tools = list(self._host._filter_tools(list(snapshot)))
         self._tool_schemas = self._llm.tool_schemas(self._runtime_tools)
+        self._deferred_tool_schemas = self._declare_deferred_tools()
         self._fixed_overhead_tokens = system_and_tools_overhead(self._system, self._tool_schemas)
         self._record_catalog_snapshot(reason="expanded")
+
+    def _declare_deferred_tools(self) -> list[dict[str, Any]]:
+        """Declarations of the tools the model may load later by reference, where the client can.
+
+        A client that loads a tool only where a tool result references it
+        (``deferred_tool_schemas``) gets the catalog's hidden and revealed tools
+        declared up front, so a search's reveal leaves the request's tools as
+        they were. They stay out of the context budget: the model does not see
+        them until a reference loads one.
+        """
+        declare = getattr(self._llm, "deferred_tool_schemas", None)
+        if self._live_catalog is None or self._live_catalog.deferred is None or declare is None:
+            return []
+        deferred = self._host._filter_tools(list(self._live_catalog.deferred()))
+        return list(declare(deferred)) if deferred else []
 
     def _run_iteration(self, iteration: int) -> _IterationResult:
         """Run one think -> observe step."""
@@ -481,7 +498,11 @@ class ReactLoop[RuntimeToolT: RuntimeTool]:
 
         Returns ``None`` when the host cancelled while the reply was streaming.
         """
-        request_tools = self._tool_schemas if tool_schemas is None else tool_schemas
+        request_tools = (
+            [*self._tool_schemas, *self._deferred_tool_schemas]
+            if tool_schemas is None
+            else tool_schemas
+        )
         transformed_messages = self._host._transform_messages(self._messages)
         llm_messages = self._host._convert_to_llm(self._llm, transformed_messages)
         estimated_tokens = enforce_context_budget(
