@@ -98,7 +98,13 @@ from core.agent_harness.turns.work_outcome import (
     tap_executed_tool_outcomes,
 )
 from core.events import runtime_event_callback_from_observer
-from core.llm.types import AgentLLMResponse, SchemaDescribedTool, ToolCall
+from core.llm.types import (
+    AgentLLMResponse,
+    CancelProbe,
+    SchemaDescribedTool,
+    TextDeltaCallback,
+    ToolCall,
+)
 from core.state.history_settings import structured_history_enabled
 from core.tool import SideEffectLevel
 from core.tool.execution import (
@@ -212,9 +218,13 @@ class _StaticToolCallLLM:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+        should_stop: CancelProbe | None = None,
     ) -> AgentLLMResponse:
         _ = system
         _ = tools
+        _ = on_text_delta
+        _ = should_stop
         if self._used:
             return AgentLLMResponse(content="", tool_calls=[], raw_content=None)
         self._used = True

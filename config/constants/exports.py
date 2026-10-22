@@ -528,6 +528,8 @@ EXPORTS: dict[str, str] = {
     # runbooks
     "RUNBOOK_CONTENT_MAX_CHARS": "runbooks",
     "RUNBOOK_MANIFEST_MAX_CHARS": "runbooks",
+    # runtime_events
+    "PARTIAL_MESSAGE_KEY": "runtime_events",
     # scheduler
     "WEEKDAY_CRON_FIELD": "scheduler",
     "NON_RETRYABLE_WORK_ERROR_KINDS": "scheduler",

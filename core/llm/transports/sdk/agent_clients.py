@@ -63,9 +63,30 @@ from core.llm.transports.sdk.request_headers import (
     http_client_with_request_headers,
     sdk_http_client_kwargs,
 )
-from core.llm.types import AgentLLMResponse, ModelType, SchemaDescribedTool, ToolCall
+from core.llm.types import (
+    AgentLLMResponse,
+    CancelProbe,
+    LLMRequestCancelled,
+    ModelType,
+    SchemaDescribedTool,
+    TextDeltaCallback,
+    ToolCall,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _InterruptedStreamError(RuntimeError):
+    """A streamed response failed after some of its text reached the caller.
+
+    Never retried: a second attempt would deliver that text again.
+    """
+
+
+def _raise_if_stopped(should_stop: CancelProbe | None, provider: str) -> None:
+    """Raise :class:`LLMRequestCancelled` once the caller's probe says stop."""
+    if should_stop is not None and should_stop():
+        raise LLMRequestCancelled(f"{provider} request cancelled by the caller")
 
 
 def _anthropic_tool_schema(tool: Any) -> dict[str, Any]:
@@ -90,6 +111,9 @@ class AnthropicAgentClient:
     # first time the provider rejects the cache markers with a 400 (e.g.
     # Bedrock-hosted Claude models that predate prompt caching).
     _cache_markers_enabled = True
+    # Responses stream by default. Flipped the same way when the provider
+    # refuses the streaming endpoint itself (see ``_streaming_refused``).
+    _streaming_enabled = True
 
     def __init__(
         self,
@@ -178,6 +202,8 @@ class AnthropicAgentClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+        should_stop: CancelProbe | None = None,
     ) -> AgentLLMResponse:
         from anthropic import (
             AuthenticationError,
@@ -189,6 +215,7 @@ class AnthropicAgentClient:
         )
 
         cache = self._cache_markers_enabled
+        stream = self._streaming_enabled
         clean_messages = strip_internal_message_markers(messages)
         kwargs: dict[str, Any] = {
             "model": self._model,
@@ -204,13 +231,34 @@ class AnthropicAgentClient:
         last_err: Exception | None = None
         for attempt in range(_RETRY_MAX_ATTEMPTS):
             try:
-                response = self._client.messages.create(**kwargs)
+                response = self._request_message(
+                    kwargs, stream=stream, on_text_delta=on_text_delta, should_stop=should_stop
+                )
                 break
+            except (_InterruptedStreamError, LLMRequestCancelled):
+                raise
             except AuthenticationError as err:
                 raise RuntimeError(self._authentication_error_message()) from err
             except NotFoundError as err:
                 raise RuntimeError(self._model_not_found_error_message()) from err
             except PermissionDeniedError as err:
+                if stream and self._streaming_refused(err):
+                    # Keyed on how *this* request went out, like the cache
+                    # fallback below; the unstreamed retry cannot recurse.
+                    self._streaming_enabled = False
+                    logger.warning(
+                        "%s refused response streaming for model '%s'; sending unstreamed "
+                        "requests (no live text while the model answers).",
+                        self.provider_name,
+                        self._model,
+                    )
+                    return self.invoke(
+                        messages,
+                        system=system,
+                        tools=tools,
+                        on_text_delta=on_text_delta,
+                        should_stop=should_stop,
+                    )
                 raise RuntimeError(self._permission_denied_error_message()) from err
             except BadRequestError as err:
                 # Anthropic surfaces "credit balance too low" as HTTP 400;
@@ -229,7 +277,13 @@ class AnthropicAgentClient:
                         self.provider_name,
                         self._model,
                     )
-                    return self.invoke(messages, system=system, tools=tools)
+                    return self.invoke(
+                        messages,
+                        system=system,
+                        tools=tools,
+                        on_text_delta=on_text_delta,
+                        should_stop=should_stop,
+                    )
                 raise RuntimeError(self._bad_request_error_message(err)) from err
             except RateLimitError as err:
                 # OpenAI's insufficient_quota lands here too, dressed as 429
@@ -327,6 +381,53 @@ class AnthropicAgentClient:
             output_tokens=output_tokens,
         )
 
+    def _request_message(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        stream: bool,
+        on_text_delta: TextDeltaCallback | None,
+        should_stop: CancelProbe | None,
+    ) -> Any:
+        """Send one Messages request and return the complete ``Message``.
+
+        Streamed, text goes to ``on_text_delta`` as it arrives; a failure after
+        that raises :class:`_InterruptedStreamError` so the caller does not retry.
+        ``should_stop`` is asked before sending and at every event, so a reply
+        still thinking or writing a tool call stops too.
+        """
+        if not stream:
+            return self._client.messages.create(**kwargs)
+        _raise_if_stopped(should_stop, self.provider_name)
+        delivered = False
+        try:
+            with self._client.messages.stream(**kwargs) as message_stream:
+                for event in message_stream:
+                    # A stop raises out of the ``with``, which closes the response.
+                    _raise_if_stopped(should_stop, self.provider_name)
+                    if (
+                        event.type == "content_block_delta"
+                        and event.delta.type == "text_delta"
+                        and event.delta.text
+                        and on_text_delta is not None
+                    ):
+                        delivered = True
+                        on_text_delta(event.delta.text)
+                return message_stream.get_final_message()
+        except LLMRequestCancelled:
+            raise
+        except Exception as err:
+            if not delivered:
+                raise
+            raise _InterruptedStreamError(
+                f"{self.provider_name} response stream failed after output began: {err}"
+            ) from err
+
+    def _streaming_refused(self, err: Exception) -> bool:
+        """Whether a permission error refuses the streaming endpoint, not the model."""
+        _ = err
+        return False
+
     @staticmethod
     def build_tool_result_message(tool_calls: list[ToolCall], results: list[Any]) -> dict[str, Any]:
         """Build the Anthropic tool_result user message for one round of tool calls."""
@@ -382,6 +483,11 @@ class BedrockAgentClient(AnthropicAgentClient):
         )
         super().__init__(model=model, max_tokens=max_tokens, client=bedrock_client)
 
+    def _streaming_refused(self, err: Exception) -> bool:
+        # IAM grants bedrock:InvokeModel and bedrock:InvokeModelWithResponseStream
+        # separately; a policy with only the first can still answer unstreamed.
+        return "InvokeModelWithResponseStream" in str(err)
+
     def _permission_denied_error_message(self) -> str:
         return (
             f"Bedrock model '{self._model}' is not available for your account. "
@@ -431,7 +537,12 @@ class BedrockConverseAgentClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+        should_stop: CancelProbe | None = None,
     ) -> AgentLLMResponse:
+        # Converse is not streamed (ConverseStream is a separate API); the
+        # caller sees the whole reply when it completes, and a cancel waits too.
+        _ = (on_text_delta, should_stop)
         import botocore.exceptions
 
         from core.llm.transports.sdk.bedrock_converse import (
@@ -530,6 +641,16 @@ _OPENAI_GPT5_PLUS_RE = re.compile(r"(?:^|[^A-Za-z0-9])gpt-[56]", re.IGNORECASE)
 
 def _supports_openai_parallel_tool_calls_param(api_key_env: str) -> bool:
     """Return whether this client targets OpenAI's native chat-completions API."""
+    return api_key_env == "OPENAI_API_KEY"
+
+
+def _streams_tool_calls(api_key_env: str) -> bool:
+    """Return whether this client's endpoint streams tool calls in OpenAI's own shape.
+
+    OpenAI itself, directly or through the OpenSRE hosted route. Compatible
+    providers differ in streamed tool-call deltas and in provider fields (e.g.
+    Gemini's ``thought_signature``) that the unstreamed replay keeps verbatim.
+    """
     return api_key_env == "OPENAI_API_KEY"
 
 
@@ -723,6 +844,8 @@ class OpenAIAgentClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+        should_stop: CancelProbe | None = None,
     ) -> AgentLLMResponse:
         from core.llm.hosted_credits import admit_hosted_credits
 
@@ -770,16 +893,23 @@ class OpenAIAgentClient:
                 kwargs["tool_choice"] = "auto"
                 if _supports_openai_parallel_tool_calls_param(api_key_env):
                     kwargs["parallel_tool_calls"] = True
+        # Streamed only for a caller that takes the text, on an endpoint whose
+        # streamed tool calls match what the unstreamed path returns.
+        stream_to = on_text_delta if _streams_tool_calls(api_key_env) else None
 
         backoff = _RETRY_INITIAL_BACKOFF_SEC
         last_err: Exception | None = None
         for attempt in range(_RETRY_MAX_ATTEMPTS):
             try:
-                if use_responses:
-                    response = self._client.responses.create(**kwargs)
-                else:
-                    response = self._client.chat.completions.create(**kwargs)
+                response = self._request_completion(
+                    kwargs,
+                    use_responses=use_responses,
+                    on_text_delta=stream_to,
+                    should_stop=should_stop,
+                )
                 break
+            except (_InterruptedStreamError, LLMRequestCancelled):
+                raise
             except AuthenticationError as err:
                 raise RuntimeError(f"{self._provider_label} authentication failed.") from err
             except NotFoundError as err:
@@ -872,21 +1002,81 @@ class OpenAIAgentClient:
                 input_dict = {}
             tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, input=input_dict))
 
+        # Preserve the raw API message so provider-specific fields (e.g. Gemini
+        # thought_signature in tool_calls) survive into the next conversation turn.
+        # exclude_none=True strips null fields (refusal, audio, function_call …)
+        # that strict OpenAI-compatible endpoints may reject on replay.
+        raw_message = msg.model_dump(exclude_none=True)
+        if stream_to is not None:
+            # A streamed tool call keeps the delta ``index`` it was assembled
+            # by. The unstreamed reply has none, and this message is replayed.
+            for raw_call in raw_message.get("tool_calls") or []:
+                raw_call.pop("index", None)
         return AgentLLMResponse(
             content=content,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
-            # Preserve the raw API message so provider-specific fields (e.g. Gemini
-            # thought_signature in tool_calls) survive into the next conversation turn.
-            # exclude_none=True strips null fields (refusal, audio, function_call …)
-            # that strict OpenAI-compatible endpoints may reject on replay.
-            raw_content=msg.model_dump(exclude_none=True),
+            raw_content=raw_message,
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_write,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             reasoning_tokens=extract_reasoning_tokens(usage),
         )
+
+    def _request_completion(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        use_responses: bool,
+        on_text_delta: TextDeltaCallback | None,
+        should_stop: CancelProbe | None,
+    ) -> Any:
+        """Send one request and return the complete response object.
+
+        With ``on_text_delta`` the request streams and text goes to it as it
+        arrives; a failure after that raises :class:`_InterruptedStreamError`.
+        A streamed request asks ``should_stop`` before sending and at every event.
+        """
+        if on_text_delta is None:
+            if use_responses:
+                return self._client.responses.create(**kwargs)
+            return self._client.chat.completions.create(**kwargs)
+        _raise_if_stopped(should_stop, self._provider_label)
+        delivered = False
+        try:
+            if use_responses:
+                with self._client.responses.stream(**kwargs) as events:
+                    for event in events:
+                        _raise_if_stopped(should_stop, self._provider_label)
+                        if event.type == "response.output_text.delta" and event.delta:
+                            delivered = True
+                            on_text_delta(event.delta)
+                    return events.get_final_response()
+            from openai.lib.streaming.chat import ChatCompletionStreamState
+
+            state = ChatCompletionStreamState()
+            with self._client.chat.completions.create(
+                **kwargs, stream=True, stream_options={"include_usage": True}
+            ) as chunks:
+                for chunk in chunks:
+                    _raise_if_stopped(should_stop, self._provider_label)
+                    state.handle_chunk(chunk)
+                    for choice in chunk.choices:
+                        if choice.delta.content:
+                            delivered = True
+                            on_text_delta(choice.delta.content)
+            # The snapshot, not ``get_final_completion()``: that raises on a
+            # length-truncated reply, which the unstreamed path returns as-is.
+            return state.current_completion_snapshot
+        except LLMRequestCancelled:
+            raise
+        except Exception as err:
+            if not delivered:
+                raise
+            raise _InterruptedStreamError(
+                f"{self._provider_label} response stream failed after output began: {err}"
+            ) from err
 
     @staticmethod
     def build_tool_result_message(tool_calls: list[ToolCall], results: list[Any]) -> dict[str, Any]:
@@ -950,7 +1140,12 @@ class CLIBackedAgentClient:
         *,
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
+        on_text_delta: TextDeltaCallback | None = None,
+        should_stop: CancelProbe | None = None,
     ) -> AgentLLMResponse:
+        # Not streamed: a reply is parsed as a tool call or as text only once
+        # the subprocess finishes, so partial output could be tool-call JSON.
+        _ = (on_text_delta, should_stop)
         from infrastructure.harness_providers import flatten_cli_messages_to_prompt
 
         tool_block = ""
