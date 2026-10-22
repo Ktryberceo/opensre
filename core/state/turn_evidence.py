@@ -15,6 +15,7 @@ replaying the wrong turn.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -30,11 +31,45 @@ USER_SENT_KEY = "sent"
 USER_CONTEXT_DIGEST_KEY = "context_digest"
 #: One assistant message: text and the tool calls it requested, if any.
 ITEM_ASSISTANT = "assistant"
+#: Key of an ``ITEM_ASSISTANT`` item holding the provider's own message for it,
+#: exactly as the model sent it (reasoning included): ``{"binding": <client
+#: binding>, "message": <JSON-safe message>, "recorded_at": <Unix seconds>}``.
+#: Only a client with the same binding resends it; any other rebuilds the
+#: message from its text and calls.
+ASSISTANT_PROVIDER_KEY = "provider"
 #: The results of the preceding assistant message's tool calls, in call order.
 ITEM_TOOL_RESULTS = "tool_results"
 
 _ITEM_KINDS = frozenset({ITEM_USER, ITEM_ASSISTANT, ITEM_TOOL_RESULTS})
 _TRUNCATION_MARKER = "\n…[{omitted} characters omitted]…\n"
+
+
+def provider_record(
+    binding: str, message: Mapping[str, Any], *, recorded_at: float
+) -> dict[str, Any] | None:
+    """The ``ASSISTANT_PROVIDER_KEY`` value for ``message``; ``None`` when it is not plain JSON."""
+    try:
+        copied = json.loads(json.dumps(message, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError):
+        return None
+    if not binding or not isinstance(copied, dict):
+        return None
+    return {"binding": binding, "message": copied, "recorded_at": int(recorded_at)}
+
+
+def recorded_provider_message(item: Mapping[str, Any]) -> tuple[dict[str, Any], str, int] | None:
+    """The provider message, binding and record time an assistant item carries, if any."""
+    record = item.get(ASSISTANT_PROVIDER_KEY)
+    if not isinstance(record, Mapping):
+        return None
+    message = record.get("message")
+    binding = record.get("binding")
+    recorded_at = record.get("recorded_at")
+    if not isinstance(message, Mapping) or not isinstance(binding, str) or not binding:
+        return None
+    if not isinstance(recorded_at, int) or isinstance(recorded_at, bool):
+        return None
+    return dict(message), binding, recorded_at
 
 
 def cap_text(text: str, max_chars: int) -> str:
@@ -77,9 +112,17 @@ class TurnEvidence:
         return any(item.get("kind") == ITEM_TOOL_RESULTS for item in self.items)
 
     def char_count(self) -> int:
-        """Characters the turn adds when replayed (text, arguments and results)."""
+        """Characters the turn adds when replayed (text, arguments and results).
+
+        An assistant message recorded with the provider's own message counts as
+        that message, reasoning included, since the same client resends it whole.
+        """
         total = 0
         for item in self.items:
+            recorded = recorded_provider_message(item)
+            if recorded is not None:
+                total += len(json.dumps(recorded[0], ensure_ascii=False))
+                continue
             total += len(str(item.get(USER_SENT_KEY) or item.get("text") or ""))
             for call in item.get("tool_calls") or ():
                 total += len(str(call.get("name") or "")) + len(str(call.get("input") or ""))
@@ -183,6 +226,7 @@ def match_turn_evidence(
 
 
 __all__ = [
+    "ASSISTANT_PROVIDER_KEY",
     "ITEM_ASSISTANT",
     "ITEM_TOOL_RESULTS",
     "ITEM_USER",
@@ -191,4 +235,6 @@ __all__ = [
     "TurnEvidence",
     "cap_text",
     "match_turn_evidence",
+    "provider_record",
+    "recorded_provider_message",
 ]

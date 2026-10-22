@@ -79,13 +79,17 @@ class MessageAdapter[LLMT: _ToolResultClient]:
     ) -> ProviderMessage:
         """An assistant turn rebuilt from stored text and tool calls, with no raw payload.
 
-        Replayed history from an earlier turn arrives this way; the provider's raw
-        response for it is gone (and may come from another provider).
+        Replayed history from an earlier turn arrives this way when its provider
+        message was not recorded or belongs to another client.
         """
         raise NotImplementedError
 
     def app_message_content(self, content: RuntimeContent) -> RuntimeContent:
         return content
+
+    def client_markers(self) -> frozenset[str]:
+        """Internal ``_opensre_*`` message keys the provider client reads, so they reach it."""
+        return frozenset()
 
 
 class _GenericAdapter[LLMT: _ConstructAssistantClient](MessageAdapter[LLMT]):
@@ -132,6 +136,12 @@ class _AnthropicAdapter[LLMT: _RawAssistantClient](MessageAdapter[LLMT]):
         blocks: list[dict[str, Any]] = [text_block(content)] if content else []
         blocks.extend(tool_use_block(tc.id, tc.name, tc.input) for tc in tool_calls)
         return {"role": "assistant", "content": blocks}
+
+    def client_markers(self) -> frozenset[str]:
+        # The client checks each resent thinking block against its binding.
+        from core.llm.transports.sdk.anthropic_thinking import THINKING_BINDING_KEY
+
+        return frozenset({THINKING_BINDING_KEY})
 
 
 class _BedrockConverseAdapter[LLMT: _RawAssistantClient](MessageAdapter[LLMT]):

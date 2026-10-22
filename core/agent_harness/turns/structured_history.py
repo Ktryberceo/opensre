@@ -9,10 +9,12 @@ their results reach the model as the provider's own tool messages.
 
 History only ever grows by whole turns at its end, and each turn replays as
 it was sent: the user message with the context it carried, the tool calls and
-results in the shape the model received them. System prompt, tools and history
-therefore stay a stable prefix the provider can cache; the per-turn context
-blocks ride in the new user message after it, with the session-context section
-only when it changed (:func:`session_context_to_send`).
+results in the shape the model received them, and each tool-call batch as the
+provider's own message, reasoning included, when the client that wrote it is
+the one replaying it. System prompt, tools and history therefore stay a stable
+prefix the provider can cache; the per-turn context blocks ride in the new
+user message after it, with the session-context section only when it changed
+(:func:`session_context_to_send`).
 """
 
 from __future__ import annotations
@@ -20,11 +22,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from config.constants.conversation_history import (
     HISTORY_ASSISTANT_TEXT_MAX_CHARS,
+    HISTORY_PROVIDER_MESSAGE_MAX_AGE_SECONDS,
     HISTORY_TOOL_ARGUMENTS_MAX_CHARS,
 )
 from config.constants.tool_discovery import REQUEST_SCOPED_RESULTS_METADATA_KEY
@@ -39,12 +43,15 @@ from core.state import ShownTools, TurnEvidence, match_turn_evidence
 from core.state.history_settings import history_tool_result_chars, structured_history_enabled
 from core.state.transcript_window import is_summary_message, summary_text
 from core.state.turn_evidence import (
+    ASSISTANT_PROVIDER_KEY,
     ITEM_ASSISTANT,
     ITEM_TOOL_RESULTS,
     ITEM_USER,
     USER_CONTEXT_DIGEST_KEY,
     USER_SENT_KEY,
     cap_text,
+    provider_record,
+    recorded_provider_message,
 )
 from core.tool import history_replay_byte_budget, truncate_output_text
 from core.tool.execution import public_tool_input
@@ -110,6 +117,27 @@ def _bounded_input(arguments: Any) -> dict[str, Any]:
     return {"truncated_arguments": cap_text(serialized, HISTORY_TOOL_ARGUMENTS_MAX_CHARS)}
 
 
+def _provider_record(
+    message: AssistantRuntimeMessage, text: str, calls: Sequence[Mapping[str, Any]]
+) -> dict[str, Any] | None:
+    """The provider's own message for a tool-call batch, when resending it says what the item says.
+
+    Only while the item kept the message whole: its text within the cap, each
+    call under its own id with all of its arguments public. Otherwise the
+    provider message would resend what the item cut, renamed or redacted.
+    """
+    if message.provider_payload is None or not message.provider_binding:
+        return None
+    if len(text) > HISTORY_ASSISTANT_TEXT_MAX_CHARS:
+        return None
+    for call, recorded in zip(message.tool_calls, calls, strict=True):
+        if recorded["id"] != call.id or recorded["input"] != call.input:
+            return None
+    return provider_record(
+        message.provider_binding, message.provider_payload, recorded_at=time.time()
+    )
+
+
 def tool_items_from_run(
     messages: Sequence[RuntimeMessage],
     *,
@@ -139,15 +167,16 @@ def tool_items_from_run(
                 {"id": call_id, "name": call.name, "input": _bounded_input(call.input)}
                 for call_id, call in zip(call_ids, message.tool_calls, strict=True)
             ]
-            items.append(
-                {
-                    "kind": ITEM_ASSISTANT,
-                    "text": cap_text(
-                        _content_text(message.content), HISTORY_ASSISTANT_TEXT_MAX_CHARS
-                    ),
-                    "tool_calls": calls,
-                }
-            )
+            text = _content_text(message.content)
+            item: dict[str, Any] = {
+                "kind": ITEM_ASSISTANT,
+                "text": cap_text(text, HISTORY_ASSISTANT_TEXT_MAX_CHARS),
+                "tool_calls": calls,
+            }
+            record = _provider_record(message, text, calls)
+            if record is not None:
+                item[ASSISTANT_PROVIDER_KEY] = record
+            items.append(item)
             pending_ids = call_ids
         elif isinstance(message, ToolResultRuntimeMessage) and pending_ids:
             hidden_raw = message.metadata.get(REQUEST_SCOPED_RESULTS_METADATA_KEY, ())
@@ -167,6 +196,8 @@ def tool_items_from_run(
             if hidden and items and items[-1].get("kind") == ITEM_ASSISTANT:
                 calls = list(items[-1].get("tool_calls") or ())
                 items[-1]["tool_calls"] = [calls[index] for index in kept_indices]
+                # The provider's message still asks for the calls left out.
+                items[-1].pop(ASSISTANT_PROVIDER_KEY, None)
             pending_ids = [original_ids[index] for index in kept_indices]
             results = []
             pairs = list(zip(message.tool_calls, message.results, strict=False))
@@ -246,8 +277,26 @@ def _stored_result(content: Any) -> Any:
     return str(content or "")
 
 
-def _replay_evidence(evidence: TurnEvidence) -> list[RuntimeMessage]:
-    """Typed messages for one recorded turn, keeping every call paired with its results."""
+def _resendable_provider_message(
+    item: Mapping[str, Any], *, now: float
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The provider message an assistant item recorded and its binding, unless it is too old."""
+    recorded = recorded_provider_message(item)
+    if recorded is None:
+        return None, None
+    message, binding, recorded_at = recorded
+    if now - recorded_at > HISTORY_PROVIDER_MESSAGE_MAX_AGE_SECONDS:
+        return None, None
+    return message, binding
+
+
+def _replay_evidence(evidence: TurnEvidence, *, now: float) -> list[RuntimeMessage]:
+    """Typed messages for one recorded turn, keeping every call paired with its results.
+
+    A tool-call batch recorded with the provider's own message carries it, so the
+    client that sent it resends it as sent, reasoning included (see
+    :class:`~core.messages.MessageMapper`).
+    """
     replayed: list[RuntimeMessage] = []
     items = list(evidence.items)
     index = 0
@@ -280,7 +329,15 @@ def _replay_evidence(evidence: TurnEvidence) -> list[RuntimeMessage]:
                 )
                 for position, call in enumerate(calls)
             )
-            replayed.append(AssistantRuntimeMessage(content=text, tool_calls=tool_calls))
+            provider_payload, provider_binding = _resendable_provider_message(item, now=now)
+            replayed.append(
+                AssistantRuntimeMessage(
+                    content=text,
+                    tool_calls=tool_calls,
+                    provider_payload=provider_payload,
+                    provider_binding=provider_binding,
+                )
+            )
             replayed.append(
                 ToolResultRuntimeMessage(
                     tool_calls=tool_calls,
@@ -301,6 +358,7 @@ def history_messages(
 ) -> list[RuntimeMessage]:
     """Earlier turns as typed messages, oldest first, ready to precede the new message."""
     matched = match_turn_evidence(conversation_messages, evidence)
+    now = time.time()
     replayed: list[RuntimeMessage] = []
     index = 0
     while index < len(conversation_messages):
@@ -313,7 +371,7 @@ def history_messages(
             continue
         record = matched.get(index)
         if record is not None:
-            replayed.extend(_replay_evidence(record))
+            replayed.extend(_replay_evidence(record, now=now))
             index += 2
             continue
         if text:

@@ -48,6 +48,21 @@ def _field(block: Any, name: str) -> Any:
     return block.get(name) if isinstance(block, dict) else getattr(block, name, None)
 
 
+def request_block(block: Any) -> Any:
+    """A response content block as the SDK encodes it in a request body, as a plain dict."""
+    if isinstance(block, dict):
+        return block
+    dump = getattr(block, "model_dump", None)
+    if not callable(dump):
+        return block
+    return dump(
+        mode="json",
+        exclude_unset=True,
+        by_alias=True,
+        exclude=getattr(block, "__api_exclude__", None),
+    )
+
+
 def replay_stable_blocks(blocks: Sequence[Any]) -> list[Any]:
     """A response's content with its text and tool-use blocks in replay shape.
 
@@ -56,7 +71,8 @@ def replay_stable_blocks(blocks: Sequence[Any]) -> list[Any]:
     recorded turn (:func:`text_block`, :func:`tool_use_block`). Sending both in
     one shape keeps the cached prefix byte-identical from turn to turn. A block
     a replay cannot rebuild (thinking, citations, server or programmatic tool
-    use) passes through unchanged.
+    use) is sent unchanged, as the plain dict the SDK would encode it to, so the
+    message can be recorded and replayed later byte for byte.
     """
     stable: list[Any] = []
     for block in blocks:
@@ -75,7 +91,7 @@ def replay_stable_blocks(blocks: Sequence[Any]) -> list[Any]:
                 )
             )
         else:
-            stable.append(block)
+            stable.append(request_block(block))
     return stable
 
 
@@ -230,6 +246,7 @@ __all__ = [
     "is_cache_unsupported_error",
     "messages_with_cache",
     "replay_stable_blocks",
+    "request_block",
     "strip_cache_markers",
     "text_block",
     "tool_use_block",

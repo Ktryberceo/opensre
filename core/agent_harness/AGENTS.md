@@ -387,7 +387,14 @@ it). Pinned by ``tests/core/agent_harness/turns/test_prompt_cache_prefix.py``:
   back into ``STABLE``.
 - A turn replays exactly as it was sent: the evidence keeps the user message as
   the model received it (``sent``), and live assistant blocks use the same
-  builders as their replay (``anthropic_cache.replay_stable_blocks``).
+  builders as their replay (``anthropic_cache.replay_stable_blocks``). Each
+  tool-call batch also keeps the provider's own message, reasoning included
+  (``TurnEvidence`` ``ASSISTANT_PROVIDER_KEY``); only a client with the same
+  ``provider_binding`` (endpoint and model) resends it, any other rebuilds it
+  from text and calls. The Anthropic client drops each thinking block whose
+  prefix changed since it was written (``anthropic_thinking.bind_thinking``),
+  because the API's history-editing check rejects it with a 400; an edit to
+  replayed history therefore costs the reasoning after it, not the request.
 - The tool list is append-only per conversation (``core.state.ShownTools``):
   tools keep their position and first-shown description, a search's reveals stay
   visible (so its result replays), new tools join at the end.

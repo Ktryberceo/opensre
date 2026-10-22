@@ -17,7 +17,7 @@ import anthropic
 import pytest
 from anthropic.lib.streaming import MessageStream
 from anthropic.types import Message, RawMessageStreamEvent
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
+from openai.types.chat import ChatCompletion
 from pydantic import TypeAdapter
 
 from core.llm.transports.sdk.agent_clients import (
@@ -27,6 +27,7 @@ from core.llm.transports.sdk.agent_clients import (
 )
 from core.llm.types import LLMRequestCancelled, ToolCall
 from tests.utils.anthropic_streams import FakeMessageStream
+from tests.utils.openai_streams import FakeChunkStream, FakeResponseStream
 
 _USER = [{"role": "user", "content": "check the pods"}]
 
@@ -321,23 +322,6 @@ _CHAT_CHUNKS = [
 ]
 
 
-class _ChunkStream:
-    """``chat.completions.create(stream=True)``: a closable iterator of chunks."""
-
-    def __init__(self, chunks: list[dict[str, Any]]) -> None:
-        self._chunks = [ChatCompletionChunk.model_validate(chunk) for chunk in chunks]
-        self.closed = False
-
-    def __enter__(self) -> _ChunkStream:
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        self.closed = True
-
-    def __iter__(self) -> Iterator[ChatCompletionChunk]:
-        return iter(self._chunks)
-
-
 def _openai_client(*, api_key_env: str = "OPENAI_API_KEY", **sdk: Any) -> OpenAIAgentClient:
     client = OpenAIAgentClient.__new__(OpenAIAgentClient)
     client._client = SimpleNamespace(**sdk)
@@ -350,9 +334,9 @@ def _openai_client(*, api_key_env: str = "OPENAI_API_KEY", **sdk: Any) -> OpenAI
 def test_streamed_openai_chat_reply_replays_like_an_unstreamed_one() -> None:
     requests: list[dict[str, Any]] = []
 
-    def create(**kwargs: Any) -> _ChunkStream:
+    def create(**kwargs: Any) -> FakeChunkStream:
         requests.append(kwargs)
-        return _ChunkStream(_CHAT_CHUNKS)
+        return FakeChunkStream(_CHAT_CHUNKS)
 
     client = _openai_client(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     deltas: list[str] = []
@@ -382,10 +366,10 @@ def test_streamed_openai_chat_reply_replays_like_an_unstreamed_one() -> None:
 
 
 def test_openai_cancel_mid_reply_closes_the_response_without_retry() -> None:
-    opened: list[_ChunkStream] = []
+    opened: list[FakeChunkStream] = []
 
-    def create(**_kwargs: Any) -> _ChunkStream:
-        opened.append(_ChunkStream(_CHAT_CHUNKS))
+    def create(**_kwargs: Any) -> FakeChunkStream:
+        opened.append(FakeChunkStream(_CHAT_CHUNKS))
         return opened[-1]
 
     client = _openai_client(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
@@ -433,26 +417,6 @@ def test_openai_compatible_provider_answers_unstreamed() -> None:
     assert response.content == "ok"
 
 
-class _ResponseEvents:
-    """``responses.stream(...)``: typed events, then the completed response."""
-
-    def __init__(self, events: list[SimpleNamespace], final: SimpleNamespace) -> None:
-        self._events = events
-        self._final = final
-
-    def __enter__(self) -> _ResponseEvents:
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        return None
-
-    def __iter__(self) -> Iterator[SimpleNamespace]:
-        return iter(self._events)
-
-    def get_final_response(self) -> SimpleNamespace:
-        return self._final
-
-
 def test_streamed_openai_responses_reply_delivers_text_and_the_final_response() -> None:
     events = [
         SimpleNamespace(type="response.created"),
@@ -462,7 +426,7 @@ def test_streamed_openai_responses_reply_delivers_text_and_the_final_response() 
     ]
     final = SimpleNamespace(output=[], output_text="All pods are ready.", usage=None)
     client = _openai_client(
-        responses=SimpleNamespace(stream=lambda **_: _ResponseEvents(events, final))
+        responses=SimpleNamespace(stream=lambda **_: FakeResponseStream(events, final))
     )
     client._model = "gpt-5.6-sol"
     deltas: list[str] = []

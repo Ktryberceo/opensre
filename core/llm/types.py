@@ -110,6 +110,10 @@ class AgentLLMResponse:
     output_tokens: int | None = None
     #: The part of ``output_tokens`` spent on hidden reasoning, when reported.
     reasoning_tokens: int | None = None
+    #: Internal ``_opensre_*`` keys the client keeps on the assistant message
+    #: built from this response; the client reads them on later requests and
+    #: they never reach the provider.
+    message_markers: dict[str, Any] = field(default_factory=dict)
 
     @property
     def has_tool_calls(self) -> bool:

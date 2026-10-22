@@ -5,6 +5,7 @@ Supports Anthropic (native + Bedrock), OpenAI-compatible, and subprocess CLI pro
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -73,6 +74,12 @@ from core.llm.transports.sdk.anthropic_deferred_tools import (
 from core.llm.transports.sdk.anthropic_deferred_tools import (
     supports_deferred_tools as _supports_deferred_tools,
 )
+from core.llm.transports.sdk.anthropic_thinking import (
+    THINKING_BINDING_KEY,
+    bind_thinking,
+    carries_thinking,
+    is_thinking_block,
+)
 from core.llm.transports.sdk.request_headers import (
     RequestHeaders,
     http_client_with_request_headers,
@@ -111,6 +118,11 @@ def _anthropic_tool_schema(tool: Any) -> dict[str, Any]:
         "description": tool.description,
         "input_schema": tool.public_input_schema,
     }
+
+
+def _endpoint_tag(base_url: Any) -> str:
+    """A short fingerprint of an API endpoint, safe to persist beside recorded messages."""
+    return hashlib.sha256(str(base_url or "").encode("utf-8")).hexdigest()[:12]
 
 
 # Anthropic prompt-caching breakpoint (ephemeral, 5-minute TTL by default).
@@ -175,6 +187,17 @@ class AnthropicAgentClient:
     @property
     def model_id(self) -> str | None:
         return self._model
+
+    @property
+    def provider_binding(self) -> str:
+        """Which client may resend this one's assistant messages verbatim: same endpoint and model.
+
+        A thinking block is readable only by the model that wrote it, as served
+        by the platform that served it.
+        """
+        base_url = getattr(getattr(self, "_client", None), "base_url", "")
+        model = getattr(self, "_model", "")
+        return f"{self.provider_name.lower()}:{_endpoint_tag(base_url)}:{model}"
 
     def tool_schemas(self, tools: Sequence[SchemaDescribedTool]) -> list[dict[str, Any]]:
         return [_anthropic_tool_schema(t) for t in tools]
@@ -248,11 +271,20 @@ class AnthropicAgentClient:
 
         cache = self._cache_markers_enabled
         stream = self._streaming_enabled
-        clean_messages, request_tools, deferred = _anthropic_deferred_tool_request(
-            strip_internal_message_markers(messages),
-            tools or [],
-            enabled=self._deferred_tools_enabled,
+        # Fallback retries resend ``messages`` as given, never this request's
+        # copies: a request without deferred tools must not carry references.
+        request_messages, request_tools, deferred = _anthropic_deferred_tool_request(
+            messages, tools or [], enabled=self._deferred_tools_enabled
         )
+        # Thinking blocks whose conversation changed since they were written
+        # would be rejected by the API's history-editing check; drop them first.
+        # The binding covers the request as sent, tool references included.
+        thinking_binding: dict[str, str] | None = None
+        if carries_thinking(request_messages):
+            request_messages, thinking_binding = bind_thinking(
+                request_messages, system=system, tools=request_tools
+            )
+        clean_messages = strip_internal_message_markers(request_messages)
         kwargs: dict[str, Any] = {
             "model": self._model,
             "max_tokens": self._max_tokens,
@@ -424,6 +456,14 @@ class AnthropicAgentClient:
             elif block_type == "tool_use":
                 tool_calls.append(ToolCall(id=block.id, name=block.name, input=dict(block.input)))
 
+        message_markers: dict[str, Any] = {}
+        if any(is_thinking_block(block) for block in content_blocks):
+            if thinking_binding is None:
+                _sent, thinking_binding = bind_thinking(
+                    request_messages, system=system, tools=request_tools
+                )
+            message_markers[THINKING_BINDING_KEY] = thinking_binding
+
         cache_read, cache_write = extract_cache_tokens(getattr(response, "usage", None))
         return AgentLLMResponse(
             content="".join(text_parts),
@@ -434,6 +474,7 @@ class AnthropicAgentClient:
             cache_creation_tokens=cache_write,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            message_markers=message_markers,
         )
 
     def _request_message(
@@ -835,6 +876,23 @@ class OpenAIAgentClient:
     @property
     def model_id(self) -> str | None:
         return self._model
+
+    @property
+    def provider_binding(self) -> str | None:
+        """Which client may resend this one's assistant messages verbatim, or ``None``.
+
+        Only official OpenAI (or the OpenSRE hosted route), whose message shapes
+        are known: a Responses message carries reasoning items of the model that
+        wrote it, a Chat Completions message the call arguments exactly as the
+        model wrote them. Other OpenAI-compatible providers replay earlier turns
+        rebuilt from text and calls.
+        """
+        api_key_env = str(getattr(self, "_api_key_env", "OPENAI_API_KEY"))
+        if api_key_env != "OPENAI_API_KEY":
+            return None
+        model = str(getattr(self, "_model", ""))
+        api = "responses" if uses_responses_api(model, api_key_env) else "chat"
+        return f"openai-{api}:{_endpoint_tag(getattr(self, '_base_url', None))}:{model}"
 
     @property
     def _provider_label(self) -> str:
