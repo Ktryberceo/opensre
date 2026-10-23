@@ -187,13 +187,14 @@ def render_reply_block(console: Console, text: str, *, lead: bool = True) -> Non
     if not visible.strip():
         return
     with console.use_theme(ui_theme.MARKDOWN_THEME):
-        # Explicit TEXT on the row so plain paragraphs never fall through to the
-        # terminal default white, which would flatten the label/body hierarchy.
+        # Pair palette foregrounds with their known background on reply rows
+        # only; unused viewport space keeps the terminal's native background.
         console.print(
             transcript_gutter(
                 _build_markdown_block(visible),
                 lead=lead,
                 label_style=_transcript_label_style(),
+                background=f"on {ui_theme.BG}",
             ),
             style=str(ui_theme.TEXT),
             width=reply_width(console),
