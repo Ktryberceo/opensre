@@ -29,7 +29,7 @@ from surfaces.interactive_shell.ui.input_prompt.stdout import (
     _AppBoundStdoutProxy,
 )
 from surfaces.interactive_shell.ui.streaming.console import StreamingConsole
-from surfaces.interactive_shell.ui.streaming.renderer import render_reply_block
+from surfaces.interactive_shell.ui.streaming.loop import ReplyStream
 from surfaces.interactive_shell.ui.transcript_view import TranscriptControl, TranscriptStore
 from surfaces.interactive_shell.ui.transcript_view.store import render_rows, trim_row_padding
 from surfaces.shared.terminal.banner import ResponsiveLaunchBanner
@@ -425,7 +425,10 @@ def test_nonempty_reply_keeps_its_surface_through_resize_and_menu(
         console = StreamingConsole(
             _Spinner(), threading.Event(), output=Console(width=80), highlight=False
         )
-        render_reply_block(console, f"**Result**: {_PARAGRAPH} with `code` and *emphasis*.")
+        stream = ReplyStream(console)
+        stream.feed(f"**Result**: {_PARAGRAPH}\n\n")
+        stream.feed("with `code` and *emphasis*.")
+        stream.finish()
         proxy.begin_transient_output()
         proxy.write("temporary menu\n")
         proxy.end_transient_output()

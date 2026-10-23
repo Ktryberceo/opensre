@@ -196,9 +196,10 @@ def test_reply_block_paints_accent_label_and_themed_body() -> None:
 
 
 @pytest.mark.parametrize("name", list_theme_names())
-@pytest.mark.parametrize("lead", [True, False])
-def test_reply_text_has_readable_effective_colors(name: str, lead: bool) -> None:
+@pytest.mark.parametrize("path", ["whole", "continuation", "streamed"])
+def test_reply_text_has_readable_effective_colors(name: str, path: str) -> None:
     """Actual mixed Markdown must pair every visible glyph with a readable surface."""
+    from surfaces.interactive_shell.ui.streaming.loop import ReplyStream
     from surfaces.interactive_shell.ui.streaming.renderer import render_reply_block
 
     def luminance(rgb: tuple[int, int, int]) -> float:
@@ -211,14 +212,19 @@ def test_reply_text_has_readable_effective_colors(name: str, lead: bool) -> None
         set_active_theme(name)
         console = Console(force_terminal=True, color_system="truecolor", no_color=False, width=80)
         with console.capture() as capture:
-            render_reply_block(
-                console,
+            markdown = (
                 "Plain **strong** and *emphasis*, `code`, [link](https://example.com).\n\n"
                 "# Heading\n\n> Quote\n\n- Bullet\n\n"
                 "| Name | Result |\n| --- | --- |\n| check | passed |\n\n"
-                "```\nplain code\n```",
-                lead=lead,
+                "```\nplain code\n```"
             )
+            if path == "streamed":
+                stream = ReplyStream(console)
+                for offset in range(0, len(markdown), 17):
+                    stream.feed(markdown[offset : offset + 17])
+                stream.finish()
+            else:
+                render_reply_block(console, markdown, lead=path == "whole")
         rendered = Text.from_ansi(capture.get())
         assert "Plain strong and emphasis" in rendered.plain
         assert "plain code" in rendered.plain

@@ -21,6 +21,7 @@ from surfaces.interactive_shell.ui.transcript import (
 )
 
 if TYPE_CHECKING:
+    from rich.console import RenderableType
     from rich.markdown import Markdown
 
 STREAM_LABEL_ASSISTANT = "assistant"
@@ -182,21 +183,26 @@ def _transcript_label_style() -> str:
     return ui_theme.reply_marker_style()
 
 
+def reply_renderable(markdown: Markdown, *, lead: bool) -> RenderableType:
+    """Pair whole and streamed reply text with a readable, unpadded surface."""
+    # Trim Markdown's padding before applying the known background, so
+    # native scrollback reflows content without extra space-filled rows.
+    surface = f"on {ui_theme.BG}"
+    return transcript_gutter(
+        Styled(UnpaddedRows(markdown), surface),
+        lead=lead,
+        label_style=f"{_transcript_label_style()} {surface}",
+    )
+
+
 def render_reply_block(console: Console, text: str, *, lead: bool = True) -> None:
     """Render a whole assistant reply inside the marked transcript gutter."""
     visible = text
     if not visible.strip():
         return
     with console.use_theme(ui_theme.MARKDOWN_THEME):
-        # Trim Markdown's padding before applying the known background, so
-        # native scrollback reflows content without extra space-filled rows.
-        surface = f"on {ui_theme.BG}"
         console.print(
-            transcript_gutter(
-                Styled(UnpaddedRows(_build_markdown_block(visible)), surface),
-                lead=lead,
-                label_style=f"{_transcript_label_style()} {surface}",
-            ),
+            reply_renderable(_build_markdown_block(visible), lead=lead),
             style=str(ui_theme.TEXT),
             width=reply_width(console),
         )
