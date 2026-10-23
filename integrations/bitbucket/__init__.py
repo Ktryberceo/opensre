@@ -1,1 +1,0 @@
-"""Bitbucket integration package."""

@@ -1,6 +1,0 @@
-"""Limits for organization-owned runbook retrieval."""
-
-RUNBOOK_CONTENT_MAX_CHARS = 24_000
-RUNBOOK_MANIFEST_MAX_CHARS = 128_000
-
-__all__ = ["RUNBOOK_CONTENT_MAX_CHARS", "RUNBOOK_MANIFEST_MAX_CHARS"]

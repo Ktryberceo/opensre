@@ -1,1 +1,0 @@
-"""Shared gateway attachment helpers."""

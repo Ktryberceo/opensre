@@ -1,8 +1,0 @@
-# Normalize line endings for shell scripts so they stay LF on all platforms.
-*.sh text eol=lf
-
-# Mark vendored third-party code so GitHub's analysis tools skip it.
-# This suppresses false-positive code scanning alerts in code we don't own.
-tests/e2e/upstream_lambda/pipeline_code/**                  linguist-vendored=true
-tests/e2e/upstream_apache_flink_ecs/pipeline_code/**        linguist-vendored=true
-tests/e2e/upstream_prefect_ecs_fargate/pipeline_code/**     linguist-vendored=true
