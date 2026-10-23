@@ -7,6 +7,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from rich.console import Console
+from rich.styled import Styled
 from rich.text import Text
 
 import infrastructure.terminal.theme as ui_theme
@@ -187,14 +188,14 @@ def render_reply_block(console: Console, text: str, *, lead: bool = True) -> Non
     if not visible.strip():
         return
     with console.use_theme(ui_theme.MARKDOWN_THEME):
-        # Pair palette foregrounds with their known background on reply rows
-        # only; unused viewport space keeps the terminal's native background.
+        # Trim Markdown's padding before applying the known background, so
+        # native scrollback reflows content without extra space-filled rows.
+        surface = f"on {ui_theme.BG}"
         console.print(
             transcript_gutter(
-                _build_markdown_block(visible),
+                Styled(UnpaddedRows(_build_markdown_block(visible)), surface),
                 lead=lead,
-                label_style=_transcript_label_style(),
-                background=f"on {ui_theme.BG}",
+                label_style=f"{_transcript_label_style()} {surface}",
             ),
             style=str(ui_theme.TEXT),
             width=reply_width(console),
