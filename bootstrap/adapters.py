@@ -16,6 +16,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from infrastructure.scheduling.scheduler.delivery_bundle import ScheduledDeliveryAdapters
     from infrastructure.scheduling.scheduler.runners import SchedulerRunners
+    from integrations.knowledge_scans import KnowledgeScanService
+    from integrations.webapp_knowledge import WebappKnowledgeSync
+    from integrations.webapp_scheduled_loops import WebappLoopSync
 
 
 def install_harness_adapters() -> None:
@@ -25,9 +28,11 @@ def install_harness_adapters() -> None:
     nothing until both registries have been installed.
     """
     import infrastructure.harness_providers as harness_providers
+    from infrastructure.scheduling.scheduler.loop_owner import install_member_resolver
     from integrations.harness_adapters import (
         register_harness_adapters as register_integrations,
     )
+    from integrations.webapp_requests import member_user_id
     from tools.harness_adapters import register_harness_adapters as register_tools
     from tools.interactive_shell.subprocess_presenter import (
         headless_subprocess_presenter_factory,
@@ -40,6 +45,8 @@ def install_harness_adapters() -> None:
     harness_providers.IntegrationSetupCommand(
         lambda service_id: f"/integrations setup {service_id}"
     ).install()
+    # A private loop's owner is one member under their Slack and web app ids.
+    install_member_resolver(member_user_id)
 
 
 def scheduler_runners() -> SchedulerRunners:
@@ -70,6 +77,7 @@ def scheduled_delivery_adapters() -> ScheduledDeliveryAdapters:
     from infrastructure.scheduling.scheduler.types import Provider
     from integrations.discord.scheduled_delivery import DiscordScheduledDelivery
     from integrations.rocketchat.scheduled_delivery import RocketChatScheduledDelivery
+    from integrations.scheduled_email import EmailScheduledDelivery
     from integrations.slack.scheduled_delivery import SlackScheduledDelivery
     from integrations.telegram.scheduled_delivery import TelegramScheduledDelivery
 
@@ -79,6 +87,7 @@ def scheduled_delivery_adapters() -> ScheduledDeliveryAdapters:
             Provider.SLACK: SlackScheduledDelivery(),
             Provider.DISCORD: DiscordScheduledDelivery(),
             Provider.ROCKETCHAT: RocketChatScheduledDelivery(),
+            Provider.EMAIL: EmailScheduledDelivery(),
             Provider.INTERACTIVE_SHELL: InteractiveShellScheduledDelivery(),
         }
     )
@@ -87,6 +96,47 @@ def scheduled_delivery_adapters() -> ScheduledDeliveryAdapters:
 def install_scheduled_delivery_adapters() -> None:
     """Bind the scheduled-delivery adapters (worker and CLI hosts)."""
     scheduled_delivery_adapters().install()
+
+
+def webapp_loop_sync(runners: SchedulerRunners | None = None) -> WebappLoopSync | None:
+    """The hosted gateway's Tasks-page sync, or ``None`` off a hosted organization.
+
+    Built here so the gateway, which hosts the scheduler, never imports
+    ``integrations`` itself. ``runners`` are the scheduler's, for ``run`` requests.
+    """
+    from integrations.webapp_scheduled_loops import webapp_loop_sync_from_environment
+
+    return webapp_loop_sync_from_environment(runners)
+
+
+def knowledge_scan_service() -> KnowledgeScanService | None:
+    """The background scans that keep workspace knowledge current, or ``None`` when it is off.
+
+    Installed as this process's scan service, so ``/knowledge scan`` in a
+    gateway turn pokes it instead of scanning inside the turn. Built here so
+    the gateway never imports ``integrations`` itself.
+    """
+    from integrations.knowledge_scans import (
+        install_scan_service,
+        knowledge_scan_service_from_environment,
+    )
+
+    service = knowledge_scan_service_from_environment()
+    install_scan_service(service)
+    return service
+
+
+def webapp_knowledge_sync(scans: KnowledgeScanService | None = None) -> WebappKnowledgeSync | None:
+    """The hosted gateway's Knowledge-page sync, or ``None`` off a hosted organization.
+
+    ``scans`` serves the app's rescan requests and the scan status it shows.
+    """
+    from integrations.webapp_knowledge import webapp_knowledge_sync_from_environment
+
+    return webapp_knowledge_sync_from_environment(
+        request_rescan=scans.request_rescan if scans is not None else None,
+        scan_status=scans.status_rows if scans is not None else None,
+    )
 
 
 def install_cli_auth_checker() -> None:
@@ -110,5 +160,8 @@ __all__ = [
     "scheduler_runners",
     "scheduled_delivery_adapters",
     "install_scheduled_delivery_adapters",
+    "webapp_loop_sync",
+    "knowledge_scan_service",
+    "webapp_knowledge_sync",
     "install_cli_auth_checker",
 ]

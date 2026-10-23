@@ -431,7 +431,3 @@ def persist_llm_api_key(env_var: str, value: str) -> bool:
         # letting a silent downgrade look like a successful write.
         console.print(f"[{WARNING}]  {GLYPH_WARNING}  {detail}[/]")
     return True
-
-
-def parse_csv_values(raw_value: str) -> list[str]:
-    return [part.strip() for part in raw_value.split(",") if part.strip()]

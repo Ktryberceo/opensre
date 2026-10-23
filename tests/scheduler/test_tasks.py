@@ -8,7 +8,10 @@ from typing import Any
 import pytest
 
 import infrastructure.scheduling.scheduler.tasks as tasks_mod
+from config.credit_attribution import credit_actor_id
+from config.principal import Actor, Principal, StorageScope
 from config.prompt_log import PromptLogConfig
+from config.scope_context import bound_storage_scope
 from core.agent.run_io import AgentRunResult
 from core.agent_harness.harness import AgentSession, SessionStartupResult
 from core.agent_harness.prompts.loop_templates import load_loop_template
@@ -23,6 +26,7 @@ from infrastructure.observability.trace.trace_session import (
     inherit_trace_session,
 )
 from infrastructure.scheduling.scheduler.loop_constants import (
+    LOOP_CREATED_BY_PARAM,
     LOOP_MODE_PARAM,
     LOOP_PROMPT_PARAM,
     LOOP_TEMPLATE_PARAM,
@@ -155,6 +159,43 @@ class TestTickTraceSession:
         assert set(outside) == set(inside) == {"react_turn_completed", "$ai_generation"}
         assert all("scheduled_task_id" not in props for props in outside.values())
         assert {props["scheduled_task_id"] for props in inside.values()} == {"cf9d8a4169ac"}
+
+
+class TestTickCreditActor:
+    """A tick's hosted credits are spent for whoever is running it."""
+
+    @staticmethod
+    def _task() -> ScheduledTask:
+        return ScheduledTask(
+            id="loop-1",
+            name="Morning ops",
+            kind=TaskKind.MANUAL_LOOP,
+            cron="0 9 * * *",
+            provider=Provider.INTERACTIVE_SHELL,
+            params={
+                LOOP_PROMPT_PARAM: "Check incidents.",
+                LOOP_MODE_PARAM: "agent",
+                LOOP_CREATED_BY_PARAM: "U0CREATOR",
+            },
+        )
+
+    def test_unattended_tick_is_the_creators_and_a_turns_tick_is_that_members(self) -> None:
+        seen: list[str | None] = []
+
+        def run(_payload: dict[str, object]) -> str:
+            seen.append(credit_actor_id())
+            return "report"
+
+        runners = runners_with_agent(run)
+        member = StorageScope(principal=Principal.org("org_1"), actor=Actor(id="U0RUNNER"))
+
+        tasks_mod.build_message(self._task(), runners)
+        with bound_storage_scope(member):
+            tasks_mod.build_message(self._task(), runners)
+
+        # A cron tick has no member of its own; ``/loops run`` in a turn spends for that member.
+        assert seen == ["U0CREATOR", "U0RUNNER"]
+        assert credit_actor_id() is None
 
 
 class TestMessageBuilders:

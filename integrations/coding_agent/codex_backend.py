@@ -23,6 +23,7 @@ from config.constants import (
     OPENAI_API_KEY_ENV,
     OPENAI_BASE_URL_ENV,
 )
+from config.credit_attribution import credit_actor_headers
 from integrations.coding_agent.backend_exec import (
     failure,
     resolve_workspace_dir,
@@ -106,7 +107,10 @@ def _relay_for_host_sandbox() -> HostedRouteRelay | None:
     hosted = hosted_openai_subprocess_env()
     if hosted is None:
         return None
-    return HostedRouteRelay(hosted[OPENAI_BASE_URL_ENV], hosted[OPENAI_API_KEY_ENV])
+    # Read here, on the turn's thread: the relay's handler threads have no turn context.
+    return HostedRouteRelay(
+        hosted[OPENAI_BASE_URL_ENV], hosted[OPENAI_API_KEY_ENV], credit_actor_headers()
+    )
 
 
 def run(

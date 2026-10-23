@@ -59,7 +59,9 @@ def with_task_plan_hooks(
     base_update = base.on_tool_update if base is not None else None
     base_batch = base.before_tool_batch if base is not None else None
     advance_armed = False
-    # Work calls let through whose result is not recorded yet, by tool-call id.
+    # Work calls of the current batch admitted here that have not returned.
+    # Per batch: a later hook may refuse a call this one admitted, which then
+    # never returns, and every call of a batch has returned before the next.
     work_in_flight: set[str] = set()
 
     def before_batch(tool_calls: Sequence[ToolCall]) -> None:
@@ -67,7 +69,6 @@ def with_task_plan_hooks(
         if base_batch is not None:
             base_batch(tool_calls)
         advance_armed = all(call.name.strip() != UPDATE_PLAN_TOOL for call in tool_calls)
-        # A call admitted by this hook but refused by an outer one never reaches after().
         work_in_flight.clear()
 
     def before(request: ToolExecutionRequest) -> BeforeToolCallResult | None:
@@ -76,9 +77,6 @@ def with_task_plan_hooks(
         if decision is not None and decision.blocked:
             return decision
         role = tool_role(request.tool)
-        is_work = role is ToolRole.ACTION and is_plan_work_name(
-            request.tool_call.name, request.arguments
-        )
         if plan_required(
             session,
             tool_name=request.tool_call.name,
@@ -91,26 +89,25 @@ def with_task_plan_hooks(
                 reason=PLAN_REQUIRED_REASON,
                 metadata={ToolBlockedBy.PLAN_REQUIRED: True},
             )
-        if (
-            advance_armed
-            and role is not ToolRole.BOOKKEEPING
-            and is_plan_work_name(request.tool_call.name, request.arguments)
-        ):
+        is_work = role is not ToolRole.BOOKKEEPING and is_plan_work_name(
+            request.tool_call.name, request.arguments
+        )
+        if is_work and role is ToolRole.ACTION:
+            work_in_flight.add(request.tool_call.id)
+        if advance_armed and is_work:
             advance_armed = False
             auto_advance_task_plan(
                 session,
                 turn_user_message=turn_user_message,
                 answer_continues=answer_continues,
             )
-        if is_work:
-            work_in_flight.add(request.tool_call.id)
         return decision
 
     def after(
         request: ToolExecutionRequest, result: ToolExecutionResult
     ) -> ToolExecutionPatch | None:
-        patch = base_after(request, result) if base_after is not None else None
         work_in_flight.discard(request.tool_call.id)
+        patch = base_after(request, result) if base_after is not None else None
         record_plan_evidence(
             session,
             request.tool_call.name,

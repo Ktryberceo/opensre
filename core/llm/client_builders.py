@@ -30,6 +30,13 @@ def _resolve_account_token(_env_name: str) -> str:
     return resolve_account_token()
 
 
+def _credit_actor_headers() -> dict[str, str]:
+    """Name the member a hosted request is spent for, read per request (clients are shared)."""
+    from config.credit_attribution import credit_actor_headers
+
+    return credit_actor_headers()
+
+
 # ---------------------------------------------------------------------------
 # Tool-calling (agent) clients
 # ---------------------------------------------------------------------------
@@ -138,6 +145,7 @@ def _native_sdk_agent_client(route: LLMRoute) -> AgentLLMClient:
                 max_tokens=spec.max_tokens,
                 base_url=account_route.base_url,
                 credential_resolver=_resolve_account_token,
+                request_headers=_credit_actor_headers,
             )
         return sdk.OpenAIAgentClient(model=model, max_tokens=spec.max_tokens)
     return sdk.AnthropicAgentClient(model=model, max_tokens=spec.max_tokens)
@@ -239,6 +247,7 @@ def _native_sdk_llm_client(route: LLMRoute, model_type: ModelType) -> Any:
                 max_tokens=spec.max_tokens,
                 base_url=account_route.base_url,
                 credential_resolver=_resolve_account_token,
+                request_headers=_credit_actor_headers,
             )
         return sdk.OpenAILLMClient(
             model=model,

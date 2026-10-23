@@ -9,6 +9,13 @@ OPENSRE_ACCOUNT_FILENAME = "account.json"
 OPENSRE_ACCOUNT_METADATA_PATH_ENV = "OPENSRE_ACCOUNT_METADATA_PATH"
 OPENSRE_ACCOUNT_TOKEN_ENV = "OPENSRE_ACCOUNT_TOKEN"
 OPENSRE_ACCOUNT_LLM_BASE_PATH = "/api/llm/v1"
+#: Names the member (Slack or Clerk user id) a hosted LLM request is spent for,
+#: so Settings → Usage can chart it per member. The webapp resolves it only to
+#: a current member of the token's organization; anything else is unattributed.
+OPENSRE_ACTOR_HEADER = "X-OpenSRE-Actor"
+#: Env var a Codex child reads the actor from (``env_http_headers``), so the id
+#: never has to be quoted into a ``-c`` override.
+OPENSRE_ACTOR_HEADER_ENV = "OPENSRE_LLM_ACTOR_ID"
 # A hosted gateway never logs in, so it cannot learn the served model the way a
 # CLI does. The webapp enforces its own model on every request; this name only
 # has to pick the matching OpenAI endpoint (gpt-6.1* → Responses API) and size
@@ -40,6 +47,10 @@ INTEGRATION_OWNER_ID_TAG = "owner_id"
 INTEGRATION_IS_DEFAULT_TAG = "is_default"
 #: How long one fetched remote-integration snapshot stays fresh in-process.
 OPENSRE_ACCOUNT_INTEGRATIONS_TTL_SECONDS = 60.0
+#: How long a hosted gateway reuses the webapp's live integration view (the
+#: workspace set and each member's own). Short, so a connection added or
+#: removed in the app reaches the next turn without a gateway restart.
+OPENSRE_WEBAPP_VAULT_TTL_SECONDS = 10.0
 #: Short fetch timeout so an offline laptop never stalls a turn on this call.
 OPENSRE_ACCOUNT_INTEGRATIONS_TIMEOUT_SECONDS = 5.0
 OPENSRE_ACCOUNT_HTTP_TIMEOUT_SECONDS = 15.0
@@ -62,6 +73,8 @@ __all__ = [
     "OPENSRE_ACCOUNT_METADATA_PATH_ENV",
     "OPENSRE_ACCOUNT_LLM_BASE_PATH",
     "OPENSRE_ACCOUNT_LLM_MODEL_ENV",
+    "OPENSRE_ACTOR_HEADER",
+    "OPENSRE_ACTOR_HEADER_ENV",
     "OPENSRE_ACCOUNT_LOGIN_PATH",
     "OPENSRE_ACCOUNT_LOGIN_SUCCESS_PATH",
     "OPENSRE_ACCOUNT_EXCHANGE_PATH",
@@ -70,6 +83,7 @@ __all__ = [
     "OPENSRE_ACCOUNT_INTEGRATIONS_PERSONAL_PARAMS",
     "OPENSRE_ACCOUNT_INTEGRATIONS_TIMEOUT_SECONDS",
     "OPENSRE_ACCOUNT_INTEGRATIONS_TTL_SECONDS",
+    "OPENSRE_WEBAPP_VAULT_TTL_SECONDS",
     "OPENSRE_ACCOUNT_SERVICE_NAMES",
     "OPENSRE_ACCOUNT_TOKEN_ENV",
     "OPENSRE_ACCOUNT_SESSION_PATH",

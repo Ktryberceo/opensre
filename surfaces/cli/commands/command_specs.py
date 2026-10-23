@@ -30,6 +30,11 @@ class CommandSpec:
 # the real Click object and fails if these drift.
 COMMAND_SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
+        "triage",
+        "Watch scoped OTel telemetry and retain incident reports (opt-in pilot).",
+        "surfaces.cli.commands.triage:triage_command",
+    ),
+    CommandSpec(
         CI_REPAIR_WORKER_COMMAND,
         "",
         "surfaces.cli.commands.ci_repair_worker:ci_repair_worker_command",
@@ -91,11 +96,6 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "surfaces.cli.commands.guardrails:guardrails",
     ),
     CommandSpec(
-        "fleet",
-        "Manage the local AI agent fleet (Claude Code, Cursor, Aider, ...).",
-        "surfaces.cli.commands.agent:fleet",
-    ),
-    CommandSpec(
         "messaging",
         "Messaging security: DM pairing and identity management.",
         "surfaces.cli.commands.messaging:messaging",
@@ -129,6 +129,11 @@ COMMAND_SPECS: tuple[CommandSpec, ...] = (
         "gateway",
         "Run the OpenSRE gateway daemon (web app, Telegram chat, task scheduler).",
         "surfaces.cli.commands.gateway:gateway_command",
+    ),
+    CommandSpec(
+        "knowledge",
+        "See what the agent knows: your memory and workspace knowledge.",
+        "surfaces.cli.commands.knowledge:knowledge_command",
     ),
     CommandSpec(
         "remote-sync",

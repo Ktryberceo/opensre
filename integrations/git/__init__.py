@@ -14,6 +14,7 @@ from integrations.git.checkout import (
     origin_url,
     remote_branch_sha,
 )
+from integrations.git.command_verbs import SHELL_OPERATORS, command_tokens, git_invocations
 from integrations.git.conflict_resolution import (
     LOCKFILE_NAMES,
     ConflictHunk,
@@ -53,6 +54,8 @@ from integrations.git.errors import (
     NOT_A_GIT_REPO,
     PROTECTED_BRANCH,
     PUSH_FAILED,
+    PUSH_RULE_REJECTED,
+    PUSH_STALE,
     GitCommandError,
 )
 from integrations.git.local import (
@@ -70,6 +73,7 @@ from integrations.git.local import (
     file_fingerprints,
     is_base_branch,
     is_git_repo,
+    push_base_branch,
     push_branch,
     push_destination,
     push_head_to_upstream,
@@ -94,6 +98,7 @@ from integrations.git.merge import (
     merge_in_progress,
     merge_ref,
     paths_with_conflict_markers,
+    rebase_onto,
     stage_paths,
     take_side,
     unmerged_paths,
@@ -101,6 +106,9 @@ from integrations.git.merge import (
 from integrations.git.worktree_capture import WorktreeChanges, capture_worktree_changes
 
 __all__ = [
+    "SHELL_OPERATORS",
+    "command_tokens",
+    "git_invocations",
     "BRANCH_FAILED",
     "COMBINED",
     "DROPPED",
@@ -114,6 +122,8 @@ __all__ = [
     "PENDING",
     "PROTECTED_BRANCH",
     "PUSH_FAILED",
+    "PUSH_RULE_REJECTED",
+    "PUSH_STALE",
     "REMOVED",
     "STILL_CONFLICTED",
     "TOOK_THEIRS",
@@ -164,6 +174,8 @@ __all__ = [
     "origin_push_urls",
     "parse_conflict_hunks",
     "paths_with_conflict_markers",
+    "rebase_onto",
+    "push_base_branch",
     "push_branch",
     "push_destination",
     "push_head_to_upstream",

@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass
+
+
+def split_input_option(token: str, value_options: Collection[str]) -> tuple[str, str | None]:
+    """Split long inline and attached short values using Click's option grammar."""
+    if token.startswith("--"):
+        option, separator, value = token.partition("=")
+        return option, value if separator else None
+    if len(token) > 2 and token[:2] in value_options:
+        return token[:2], token[2:]
+    return token, None
 
 
 @dataclass(frozen=True)
@@ -19,6 +30,7 @@ class CommandInput:
     alternative_options: tuple[frozenset[str], ...] = ()
     max_positionals: int = 0
     missing_target: bool = False
+    inline_values: bool = False
 
     def matches(self, command: str, args: list[str]) -> bool:
         """Return whether this input applies to a valid but incomplete invocation."""
@@ -30,24 +42,35 @@ class CommandInput:
         index = 1
         while index < len(args):
             option = args[index]
+            inline_value: str | None = None
+            if self.inline_values:
+                option, inline_value = split_input_option(option, self.value_options)
             if not option.startswith("--") and positionals < self.max_positionals:
                 positionals += 1
-                supplied_target = supplied_target or bool(option.strip())
+                supplied_target = supplied_target or bool(args[index].strip())
                 index += 1
                 continue
             if option in self.flag_options:
+                if inline_value is not None:
+                    return False
                 has_value = True
                 index += 1
             else:
-                if option not in self.value_options or index + 1 >= len(args):
+                if option not in self.value_options:
                     return False
-                value = args[index + 1]
+                if inline_value is not None:
+                    value = inline_value
+                    index += 1
+                else:
+                    if index + 1 >= len(args):
+                        return False
+                    value = args[index + 1]
+                    index += 2
                 if (
                     not value.strip() and option not in self.empty_value_options
                 ) or value.startswith("--"):
                     return False
                 has_value = bool(value.strip())
-                index += 2
                 if option in self.greedy_value_options:
                     while index < len(args) and not args[index].startswith("--"):
                         if args[index].strip():
@@ -134,12 +157,62 @@ LOOPS_TARGET_INPUT = CommandInput(
 WORK_DONE_INPUT = CommandInput(
     "/work", ("done", "complete"), max_positionals=1, missing_target=True
 )
+CRON_TARGET_INPUT = CommandInput(
+    "/cron", ("logs", "run", "remove"), max_positionals=1, missing_target=True
+)
+GOAL_EDIT_INPUT = CommandInput("/goal", ("edit",))
+WORK_EDIT_INPUT = CommandInput("/work", ("edit",), max_positionals=1)
+LOOPS_EDIT_INPUT = CommandInput("/loops", ("edit",), max_positionals=1)
+WORK_EDIT_TARGET_INPUT = CommandInput(
+    "/work",
+    ("edit",),
+    value_options=WORK_ADD_INPUT.value_options | {"--title"},
+    empty_value_options=frozenset({"--title", "--project", "--owner", "--due"}),
+    max_positionals=1,
+    missing_target=True,
+)
+LOOPS_EDIT_TARGET_INPUT = CommandInput(
+    "/loops",
+    ("edit",),
+    value_options=frozenset(
+        {"--name", "--prompt", "--time", "--tz", "--cron", "--window", "--mode"}
+    ),
+    flag_options=frozenset({"--daily", "--weekdays"}),
+    greedy_value_options=frozenset({"--name", "--prompt", "--cron"}),
+    empty_value_options=frozenset(
+        {"--name", "--prompt", "--time", "--tz", "--cron", "--window", "--mode"}
+    ),
+    max_positionals=1,
+    missing_target=True,
+)
+MESSAGING_PLATFORM_INPUT = CommandInput(
+    "/messaging",
+    ("status", "pair"),
+    value_options=frozenset({"--platform", "-p"}),
+    alternative_options=(frozenset({"--platform", "-p"}),),
+    inline_values=True,
+)
+MESSAGING_IDENTITY_INPUT = CommandInput(
+    "/messaging",
+    ("allow", "revoke"),
+    value_options=frozenset({"--platform", "-p", "--user-id", "-u"}),
+    alternative_options=(frozenset({"--platform", "-p"}), frozenset({"--user-id", "-u"})),
+    inline_values=True,
+)
 COMMAND_INPUTS = (
     WORK_ADD_INPUT,
     GOAL_SET_INPUT,
     LOOPS_ADD_INPUT,
     LOOPS_TARGET_INPUT,
     WORK_DONE_INPUT,
+    CRON_TARGET_INPUT,
+    GOAL_EDIT_INPUT,
+    WORK_EDIT_INPUT,
+    LOOPS_EDIT_INPUT,
+    WORK_EDIT_TARGET_INPUT,
+    LOOPS_EDIT_TARGET_INPUT,
+    MESSAGING_PLATFORM_INPUT,
+    MESSAGING_IDENTITY_INPUT,
 )
 
 

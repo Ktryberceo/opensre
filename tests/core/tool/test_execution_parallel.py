@@ -1,4 +1,4 @@
-"""Read-only calls of one response run at once; hooks still run in order on the caller."""
+"""Opted-in reads run together; the kill switch restores caller-thread execution."""
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ def _registered(
     run: Callable[..., Any],
     *,
     side_effect_level: SideEffectLevel | None = SideEffectLevel.READ_ONLY,
+    concurrency_safe: bool = True,
 ) -> RegisteredTool:
     return RegisteredTool(
         name=name,
@@ -48,6 +49,8 @@ def _registered(
         },
         source="knowledge",
         side_effect_level=side_effect_level,
+        concurrency_safe=concurrency_safe
+        and side_effect_level in {SideEffectLevel.NONE, SideEffectLevel.READ_ONLY},
         run=run,
     )
 
@@ -97,7 +100,10 @@ def test_read_only_calls_run_at_once_and_answer_in_provider_order() -> None:
     assert [r.details for r in results] == [{"value": "read_a"}, {"value": "read_b"}]
 
 
-def test_hooks_run_on_the_calling_thread_all_checks_before_any_result() -> None:
+def test_hooks_run_on_the_calling_thread_with_parallelism_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(OPENSRE_PARALLEL_TOOL_CALLS_ENV, "0")
     caller = threading.get_ident()
     events: list[tuple[str, str]] = []
     threads: set[int] = set()
@@ -124,12 +130,31 @@ def test_hooks_run_on_the_calling_thread_all_checks_before_any_result() -> None:
     assert threads == {caller}
     assert events == [
         ("before", "read_a"),
-        ("before", "read_b"),
-        ("before", "read_c"),
         ("after", "read_a"),
+        ("before", "read_b"),
         ("after", "read_b"),
+        ("before", "read_c"),
         ("after", "read_c"),
     ]
+
+
+def test_read_only_calls_need_an_explicit_concurrency_opt_in() -> None:
+    caller = threading.get_ident()
+    threads: list[int] = []
+
+    def run(value: str) -> dict[str, Any]:
+        threads.append(threading.get_ident())
+        return {"value": value}
+
+    names = ("read_a", "read_b")
+    results = execute_tool_calls(
+        [_call(name) for name in names],
+        [_registered(name, run, concurrency_safe=False) for name in names],
+        {},
+    )
+
+    assert not any(result.is_error for result in results)
+    assert threads == [caller, caller]
 
 
 def test_a_mutating_call_runs_alone_between_read_only_groups() -> None:
@@ -157,10 +182,12 @@ def test_a_mutating_call_runs_alone_between_read_only_groups() -> None:
     ]
 
 
+@pytest.mark.parametrize("setting", ["0", "false", "no", "off", " OFF "])
 def test_the_kill_switch_runs_read_only_calls_one_at_a_time(
     monkeypatch: pytest.MonkeyPatch,
+    setting: str,
 ) -> None:
-    monkeypatch.setenv(OPENSRE_PARALLEL_TOOL_CALLS_ENV, "0")
+    monkeypatch.setenv(OPENSRE_PARALLEL_TOOL_CALLS_ENV, setting)
     overlap = _Overlap()
     tools = [_registered(n, overlap.tool(n)) for n in ("read_a", "read_b")]
 
@@ -170,7 +197,10 @@ def test_the_kill_switch_runs_read_only_calls_one_at_a_time(
     assert overlap.order == ["start:read_a", "end:read_a", "start:read_b", "end:read_b"]
 
 
-def test_a_check_that_ends_the_turn_skips_the_calls_after_it_in_the_group() -> None:
+def test_a_check_that_ends_the_turn_skips_queued_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("core.tool.execution.MAX_CONCURRENT_TOOL_CALLS", 1)
     overlap = _Overlap()
     tools = [_registered(n, overlap.tool(n)) for n in ("read_a", "read_b", "read_c")]
     started: list[str] = []
@@ -226,7 +256,7 @@ def test_a_raising_body_in_a_group_still_reaches_the_after_hook(
     assert results[0].is_error and "read_a unreachable" in str(results[0].content)
     assert results[0].details.get(TOOL_FAILURE_STATE_KEY) == failure_state
     assert not results[1].is_error
-    assert seen == [("read_a", True), ("read_b", False)]
+    assert sorted(seen) == [("read_a", True), ("read_b", False)]
 
 
 def test_bodies_see_the_callers_context_variables() -> None:

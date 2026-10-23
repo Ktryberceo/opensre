@@ -37,6 +37,7 @@ class _Upstream:
                     {
                         "path": self.path,
                         "authorization": self.headers.get("authorization"),
+                        "actor": self.headers.get("x-opensre-actor"),
                         "content_type": self.headers.get("content-type"),
                         "body": self.rfile.read(length).decode("utf-8"),
                     }
@@ -67,9 +68,16 @@ def upstream() -> Iterator[_Upstream]:
         fake.server.server_close()
 
 
-def _post(url: str, token: str | None, body: dict[str, Any]) -> tuple[int, bytes]:
+def _post(
+    url: str,
+    token: str | None,
+    body: dict[str, Any],
+    headers: dict[str, str] | None = None,
+) -> tuple[int, bytes]:
     request = urllib.request.Request(url, data=json.dumps(body).encode("utf-8"), method="POST")
     request.add_header("content-type", "application/json")
+    for name, value in (headers or {}).items():
+        request.add_header(name, value)
     if token is not None:
         request.add_header("authorization", f"Bearer {token}")
     try:
@@ -99,6 +107,27 @@ def test_the_run_token_opens_the_relay_and_the_account_token_goes_upstream(
     assert seen["authorization"] == f"Bearer {_ACCOUNT_TOKEN}"
     assert seen["content_type"] == "application/json"
     assert json.loads(seen["body"]) == {"model": "m", "input": "hi"}
+
+
+def test_the_relay_names_the_runs_member_and_the_agent_cannot_name_another(
+    upstream: _Upstream,
+) -> None:
+    # Arrange: the run is spent for U0MEMBER; the agent claims someone else
+    relay = HostedRouteRelay(upstream.base_url, _ACCOUNT_TOKEN, {"X-OpenSRE-Actor": "U0MEMBER"})
+
+    # Act
+    with relay:
+        status, _ = _post(
+            f"{relay.base_url}/responses",
+            relay.run_token,
+            {"model": "m", "input": "hi"},
+            headers={"X-OpenSRE-Actor": "U0SOMEONEELSE"},
+        )
+
+    # Assert: Settings → Usage charges the run's member, never the agent's claim
+    assert status == HTTPStatus.OK
+    (seen,) = upstream.requests
+    assert seen["actor"] == "U0MEMBER"
 
 
 def test_anything_but_the_run_token_is_refused_before_reaching_the_route(

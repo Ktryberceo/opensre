@@ -361,7 +361,11 @@ RULES: tuple[PathRule, ...] = (
         ),
     ),
     PathRule(
-        "integrations/github/tools/security_fix/", ("tests/tools/test_github_security_fix.py",)
+        "integrations/github/tools/security_fix/",
+        (
+            "tests/tools/test_github_security_fix.py",
+            "tests/tools/test_github_security_fix_push.py",
+        ),
     ),
     PathRule(
         "integrations/github/tools/",
@@ -440,14 +444,6 @@ RULES: tuple[PathRule, ...] = (
         ),
     ),
     PathRule(
-        "integrations/opsgenie/",
-        (
-            "tests/integrations/opsgenie/",
-            "tests/tools/test_opsgenie_alert_detail_tool.py",
-            "tests/tools/test_opsgenie_alerts_tool.py",
-        ),
-    ),
-    PathRule(
         "integrations/pagerduty/",
         (
             "tests/integrations/pagerduty/",
@@ -510,13 +506,6 @@ RULES: tuple[PathRule, ...] = (
         ),
     ),
     PathRule(
-        "integrations/x_mcp/",
-        (
-            "tests/integrations/test_x_mcp.py",
-            "tests/tools/test_x_mcp_tool.py",
-        ),
-    ),
-    PathRule(
         "integrations/argocd/",
         (
             "tests/integrations/argocd/",
@@ -567,7 +556,6 @@ RULES: tuple[PathRule, ...] = (
         ),
     ),
     PathRule("integrations/", ("tests/integrations/",)),
-    PathRule("tools/system/fleet_monitoring/", ("tests/core/agent/", "tests/fleet_monitoring/")),
     PathRule("surfaces/cli/", ("tests/cli/",)),
     PathRule("surfaces/interactive_shell/", ("tests/interactive_shell/",)),
     PathRule("gateway/", ("gateway/tests/",)),

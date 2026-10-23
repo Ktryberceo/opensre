@@ -15,14 +15,6 @@ from config.constants.new_relic import (
     NEW_RELIC_API_KEY_ENV,
     NEW_RELIC_INSTANCES_ENV,
 )
-from config.constants.yandex_cloud import (
-    YC_FOLDER_ID_ENV,
-    YC_IAM_TOKEN_ENV,
-    YC_SA_KEY_ENV,
-    YC_SA_KEY_FILE_ENV,
-    YC_TOKEN_ENV,
-    YC_USE_METADATA_ENV,
-)
 from integrations.registry import INTEGRATION_SPECS_BY_SERVICE, family_key, service_key
 from integrations.store import load_integrations
 
@@ -163,7 +155,6 @@ def load_env_integration_services() -> list[str]:
         or _all_env("RAILWAY_PROJECT", "RAILWAY_SERVICE", "RAILWAY_ENVIRONMENT"),
     )
     add("vercel", _env_is_set("VERCEL_API_TOKEN"))
-    add("opsgenie", _env_is_set("OPSGENIE_API_KEY"))
     add("pagerduty", _env_is_set("PAGERDUTY_API_KEY"))
     add("incident_io", _env_is_set("INCIDENT_IO_API_KEY"))
     add("jira", _all_env("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN"))
@@ -195,20 +186,8 @@ def load_env_integration_services() -> list[str]:
     )
     add("posthog_mcp", _any_env("POSTHOG_MCP_COMMAND", "POSTHOG_MCP_URL", "POSTHOG_MCP_AUTH_TOKEN"))
     add("sentry_mcp", _any_env("SENTRY_MCP_COMMAND", "SENTRY_MCP_URL", "SENTRY_MCP_AUTH_TOKEN"))
-    add("x_mcp", _any_env("X_MCP_COMMAND", "X_MCP_URL", "X_MCP_AUTH_TOKEN"))
     add("mariadb", _all_env("MARIADB_HOST", "MARIADB_DATABASE"))
     add("opensearch", _env_is_set("OPENSEARCH_URL"))
-    add(
-        "yandex_cloud",
-        # A folder plus one credential, or the instance metadata service, which
-        # needs neither. Mirrors the classifier's rule so the banner, health and
-        # verification agree on whether it is configured.
-        (
-            _env_is_set(YC_FOLDER_ID_ENV)
-            and _any_env(YC_SA_KEY_FILE_ENV, YC_SA_KEY_ENV, YC_TOKEN_ENV, YC_IAM_TOKEN_ENV)
-        )
-        or os.getenv(YC_USE_METADATA_ENV, "").strip().lower() in {"1", "true", "yes", "on"},
-    )
 
     return list(dict.fromkeys(services))
 
@@ -235,12 +214,14 @@ def configured_integration_services() -> list[str]:
     except Exception:
         remote_records = []
     # A silo hydrates GitHub and Slack from its secret, then asks the webapp
-    # which Pipedream apps (Linear, and so on) the workspace connected. Those
-    # app ids have to be in this list or the model reports them as disconnected.
+    # which Pipedream apps (Linear, and so on) the workspace connected, and
+    # which (Gmail, Outlook, Drive, ...) the member taking this turn connected
+    # for themself. Those app ids have to be in this list or the model reports
+    # them as disconnected. Same cached records the tools resolve from.
     try:
-        from integrations.webapp_vault import fetch_webapp_org_integrations
+        from integrations.member_integrations import turn_vault_records
 
-        vault_records = fetch_webapp_org_integrations() or []
+        vault_records = turn_vault_records() or []
     except Exception:
         vault_records = []
     return _configured_service_names(

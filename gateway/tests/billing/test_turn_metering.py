@@ -33,7 +33,7 @@ def test_allowed_or_deliberately_disabled_metering_admits_the_bound_turn(
 
     assert admitted is True
     consume.assert_called_once_with(
-        "org_metered", reason="telegram_turn", idempotency_key="telegram:44271"
+        "org_metered", reason="telegram_turn", idempotency_key="telegram:44271", actor=None
     )
     denied.assert_not_called()
 

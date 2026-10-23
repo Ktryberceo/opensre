@@ -79,6 +79,7 @@ class ExecutionClaim:
     lease_expires_at: datetime
     target_filter: frozenset[tuple[Provider, str]] | None = None
     report: TaskReport | None = None
+    first_started_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +230,15 @@ def try_claim(
             else:
                 attempt = 1
 
+            first_started_at = now
+            if attempt > 1:
+                first_attempt = conn.execute(
+                    "SELECT started_at FROM task_runs WHERE task_id = ? AND fire_time = ? "
+                    "ORDER BY attempt LIMIT 1",
+                    (task_id, fire_time),
+                ).fetchone()
+                if first_attempt is not None:
+                    first_started_at = _parse_datetime(first_attempt[0]) or now
             owner_token = uuid4().hex
             conn.execute(
                 "INSERT INTO task_runs "
@@ -262,6 +272,7 @@ def try_claim(
                 now + timedelta(seconds=_CLAIM_LEASE_SECONDS),
                 target_filter,
                 replay_report,
+                first_started_at,
             )
     except sqlite3.IntegrityError:
         return None
@@ -356,21 +367,25 @@ def get_recoverable_runs(
         return [RecoverableRun(task_id=str(row[0]), fire_time=str(row[1])) for row in rows]
 
 
-def has_live_claim(db_path: Path | None = None) -> bool:
-    """Whether any scheduled execution currently holds an unexpired lease.
+def has_live_claim(db_path: Path | None = None, *, task_ids: Collection[str] | None = None) -> bool:
+    """Whether any scheduled execution (of ``task_ids``, when given) holds an unexpired lease.
 
     Live owners renew their lease while they run, so a ``True`` means some
     process is executing a scheduled task now; a claimant that died stops
     counting once its lease lapses. A missing database is never created here.
     """
+    if task_ids is not None and not task_ids:
+        return False
     path = db_path if db_path is not None else database.default_run_database_path()
     if not path.exists():
         return False
+    query = "SELECT 1 FROM task_runs WHERE status = ? AND lease_expires_at >= ?"
+    params: tuple[str, ...] = (TaskStatus.RUNNING.value, datetime.now(UTC).isoformat())
+    if task_ids is not None:
+        query += " AND task_id IN (SELECT value FROM json_each(?))"
+        params += (json.dumps(list(task_ids)),)
     with database.connection(path) as conn:
-        row = conn.execute(
-            "SELECT 1 FROM task_runs WHERE status = ? AND lease_expires_at >= ? LIMIT 1",
-            (TaskStatus.RUNNING.value, datetime.now(UTC).isoformat()),
-        ).fetchone()
+        row = conn.execute(f"{query} LIMIT 1", params).fetchone()
     return row is not None
 
 
@@ -404,6 +419,39 @@ def skip_queued_runs(
             skipped += 1
         if progressed == 0:
             return skipped
+
+
+def retire_pending_runs(
+    task_ids: Collection[str],
+    *,
+    reason: str,
+    fire_time: str | None = None,
+    before_started_at: datetime | None = None,
+    db_path: Path | None = None,
+) -> int:
+    """Skip unstarted ticks without disturbing live claims or retained-report recovery."""
+    path = db_path if db_path is not None else database.default_run_database_path()
+    if not task_ids or not path.exists():
+        return 0
+    with database.transaction(path, immediate=True) as conn:
+        cursor = conn.execute(
+            "UPDATE task_runs SET status = ?, finished_at = ?, error = ? "
+            "WHERE task_id IN (SELECT value FROM json_each(?)) "
+            "AND status = ? AND report IS NULL AND (? IS NULL OR fire_time = ?) "
+            "AND (? IS NULL OR started_at <= ?) AND instr(fire_time, '.') = 0",
+            (
+                TaskStatus.SKIPPED.value,
+                datetime.now(UTC).isoformat(),
+                reason,
+                json.dumps(list(task_ids)),
+                TaskStatus.PENDING.value,
+                fire_time,
+                fire_time,
+                before_started_at.isoformat() if before_started_at is not None else None,
+                before_started_at.isoformat() if before_started_at is not None else None,
+            ),
+        )
+        return cursor.rowcount
 
 
 def complete_run(
@@ -580,6 +628,26 @@ def get_group_runs(
         return [_row_to_task_run(row) for row in rows]
 
 
+def get_recent_runs(
+    task_ids: Collection[str], *, per_task: int, db_path: Path | None = None
+) -> list[TaskRun]:
+    """Return up to ``per_task`` newest attempts of each task, newest first."""
+    if not task_ids or per_task <= 0:
+        return []
+    runs: list[TaskRun] = []
+    # One bounded walk of ``task_runs_recent`` per task, however long its history.
+    with database.connection(db_path) as conn:
+        for task_id in task_ids:
+            rows = conn.execute(
+                f"SELECT {_RUN_COLUMNS} FROM task_runs WHERE task_id = ? "
+                "ORDER BY started_at DESC, id DESC LIMIT ?",
+                (task_id, per_task),
+            ).fetchall()
+            runs.extend(_row_to_task_run(row) for row in rows)
+    runs.sort(key=lambda run: (run.started_at, run.run_id or 0), reverse=True)
+    return runs
+
+
 def get_group_run(
     task_ids: Collection[str], run_id: int, *, db_path: Path | None = None
 ) -> TaskRun | None:
@@ -695,6 +763,7 @@ __all__ = [
     "has_live_claim",
     "record_run_report",
     "renew_claims",
+    "retire_pending_runs",
     "skip_queued_runs",
     "try_claim",
     "try_queue_run",

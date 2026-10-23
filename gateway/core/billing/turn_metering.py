@@ -8,6 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 from config.account import account_llm_route
+from config.credit_attribution import credit_actor_id
 from gateway.core.billing.credits_client import CreditsOutcome, consume_credits
 
 
@@ -72,6 +73,7 @@ def admit_metered_turn() -> bool:
         request.organization_id,
         reason=request.reason,
         idempotency_key=request.idempotency_key,
+        actor=credit_actor_id(),
     )
     if outcome in (CreditsOutcome.ALLOWED, CreditsOutcome.DISABLED):
         return True

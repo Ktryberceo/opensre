@@ -40,10 +40,19 @@ from infrastructure.harness_providers import action_prompt_vendor_fragments
 
 if TYPE_CHECKING:
     from core.agent_harness.turns.turn_snapshot import TurnSnapshot
+    from core.domain.repositories import RepositoryPreferences
 
 logger = logging.getLogger(__name__)
 
 _USER_TEMPLATE = "USER MESSAGE (literal): <<<{text}>>>"
+
+#: Opens the session-context section of a user message. A turn sends the section
+#: only when it changed, and the history replays earlier copies verbatim, so the
+#: newest copy in the conversation is the current one.
+SESSION_CONTEXT_HEADER = (
+    "SESSION CONTEXT (as of this message; it stays current until a later message "
+    "carries a new SESSION CONTEXT, which replaces it):\n"
+)
 
 
 def _runtime_facts_blocks(surface: str | None) -> tuple[str, str]:
@@ -195,8 +204,20 @@ def build_action_system_prompt_envelope(turn_snapshot: TurnSnapshot) -> PromptEn
             provenance="core.agent_harness.turns.turn_snapshot",
         )
     )
-    # Volatile before ephemeral so render_cached + render_ephemeral reassemble
-    # into render() and the cache breakpoint can sit after memory.
+    # Session context (the context and volatile tiers) leaves the system prompt
+    # for the conversation, so a memory write or a newly named repository adds
+    # one section to the history instead of re-pricing the whole prefix.
+    # Workspace knowledge first: a scan rewrites it far less often than a
+    # member's own memory changes.
+    blocks.extend(
+        _optional_block(
+            id=PromptBlockId.WORKSPACE_KNOWLEDGE,
+            kind=PromptBlockKind.CONTEXT,
+            tier=PromptTier.VOLATILE,
+            content=_workspace_knowledge(turn_snapshot),
+            provenance="core.domain.knowledge",
+        )
+    )
     memory_block = _long_term_memory(turn_snapshot)
     blocks.extend(
         _optional_block(
@@ -277,6 +298,15 @@ def build_action_system_prompt_envelope(turn_snapshot: TurnSnapshot) -> PromptEn
             provenance="core.domain.memory",
         )
     )
+    blocks.extend(
+        _optional_block(
+            id=PromptBlockId.RELEVANT_WORKSPACE_KNOWLEDGE,
+            kind=PromptBlockKind.CONTEXT,
+            tier=PromptTier.EPHEMERAL,
+            content=relevant_workspace_knowledge_block(turn_snapshot),
+            provenance="core.domain.knowledge",
+        )
+    )
     # With structured history the earlier turns precede the user message as
     # typed messages (``turns.structured_history``); the text block and the facts
     # scraped from it remain only as the fallback when that is switched off.
@@ -350,28 +380,59 @@ def connected_integrations_block(turn_snapshot: TurnSnapshot) -> str:
     return f"CONNECTED INTEGRATIONS (this install, right now): {listing}\n{gate_note}\n"
 
 
+_VCS_INTEGRATIONS = frozenset({"github", "gitlab", "bitbucket"})
+
+
 def repository_context_block(turn_snapshot: TurnSnapshot) -> str:
-    """Render one active repo plus every repo retained in session memory."""
+    """Render the session's repositories and the organization's standing choices."""
     active = turn_snapshot.active_vcs_repositories
     known = turn_snapshot.known_vcs_repositories
+    preferences = turn_snapshot.repository_preferences
     vendors = sorted(set(active) | set(known))
-    if not vendors:
+    vcs_connected = bool(_VCS_INTEGRATIONS & set(turn_snapshot.configured_integrations))
+    if not vendors and preferences.empty and not vcs_connected:
         return ""
 
-    lines: list[str] = []
-    for vendor in vendors:
-        active_repo = active.get(vendor, "none")
-        remembered = known.get(vendor, ())
-        remembered_text = ", ".join(remembered) if remembered else "none"
-        lines.append(f"- {vendor}: active={active_repo}; remembered={remembered_text}")
-    repository_lines = "\n".join(lines)
+    sections: list[str] = []
+    if vendors:
+        lines: list[str] = []
+        for vendor in vendors:
+            active_repo = active.get(vendor, "none")
+            remembered = known.get(vendor, ())
+            remembered_text = ", ".join(remembered) if remembered else "none"
+            lines.append(f"- {vendor}: active={active_repo}; remembered={remembered_text}")
+        repository_lines = "\n".join(lines)
+        sections.append(
+            "REPOSITORY CONTEXT (this session; one active target per vendor, many "
+            "remembered repositories):\n"
+            f"{repository_lines}\n"
+            "Use the active target for an unqualified repository request. A user-named "
+            "repository becomes active without deleting the others. Do not describe the "
+            "active repository as the only repository OpenSRE remembers.\n"
+        )
+    sections.append(_repository_preferences_section(preferences))
+    return "\n".join(sections) + "\n"
+
+
+def _repository_preferences_section(preferences: RepositoryPreferences) -> str:
+    primary = ", ".join(preferences.primary) or "none saved"
+    excluded = ", ".join(preferences.excluded) or "none saved"
+    notes = "".join(
+        f"- note on {repository}: {note}\n" for repository, note in preferences.notes.items()
+    )
     return (
-        "REPOSITORY CONTEXT (this session; one active target per vendor, many "
-        "remembered repositories):\n"
-        f"{repository_lines}\n"
-        "Use the active target for an unqualified repository request. A user-named "
-        "repository becomes active without deleting the others. Do not describe the "
-        "active repository as the only repository OpenSRE remembers.\n\n"
+        "REPOSITORY PREFERENCES (whole organization, kept across sessions):\n"
+        f"- primary: {primary}\n"
+        f"- never change: {excluded}\n"
+        f"{notes}"
+        'A repository named only by its short name ("the opensre repo") is the '
+        "primary repository with that name. With no primary for it, pick the "
+        "original over its forks and mirrors (a fork's parent wins), say which you "
+        "picked, and do not ask the user to choose between a repository and its "
+        "forks; ask only when unrelated repositories that are not forks share the "
+        "name. Never create branches, commits, pushes, pull requests or issues in a "
+        "never-change repository. When the user says which repository to work on or "
+        "to leave alone, save it with repository_preferences in the same turn.\n"
     )
 
 
@@ -419,7 +480,7 @@ def interrupted_turn_recovery_block(turn_snapshot: TurnSnapshot) -> str:
 
 
 def long_term_memory_block() -> str:
-    """The stable memory index (summary plus one line per memory) for the cached prompt half."""
+    """The memory index (summary plus one line per memory) for the session-context section."""
     from core.domain.memory import (
         ensure_memory_store,
         memory_available_here,
@@ -434,7 +495,7 @@ def long_term_memory_block() -> str:
         return ""
     return (
         "LONG-TERM MEMORY (durable facts from earlier sessions; the index lists "
-        "stored memories one per line, most useful first). The full text of "
+        "stored memories one per line, by kind, most recently updated first). The full text of "
         "memories that match this request appears under RELEVANT MEMORIES; read "
         "any other with memory_recall. When the USER MESSAGE contains a new useful "
         "durable fact, call memory_remember in this turn even if they never said "
@@ -442,6 +503,52 @@ def long_term_memory_block() -> str:
         "existing name over near-duplicates. Repository memories are a collection: "
         "keep one stable memory per repository and never overwrite one repository's "
         "facts merely because another repository became active:\n"
+        f"{rendered}\n\n"
+    )
+
+
+def workspace_knowledge_block() -> str:
+    """The organization profile and workspace entry index for the session-context section."""
+    from core.domain.knowledge import render_workspace_block
+
+    rendered = render_workspace_block()
+    if not rendered:
+        return ""
+    return (
+        "WORKSPACE KNOWLEDGE (shared by everyone in this organization and kept "
+        "current by background scans of its connected integrations, not by this "
+        "user; use it to know who people are, what the company does and where "
+        "things live. The full text of entries that match this request appears "
+        "under RELEVANT WORKSPACE KNOWLEDGE; read any other with memory_recall. "
+        "It may be out of date, so check anything that could have changed before "
+        "acting on it):\n"
+        f"{rendered}\n\n"
+    )
+
+
+def _workspace_knowledge(turn_snapshot: TurnSnapshot) -> str:
+    """The workspace block, unless the host runs this turn without long-term memory."""
+    return workspace_knowledge_block() if turn_snapshot.long_term_memory_enabled else ""
+
+
+def relevant_workspace_knowledge_block(turn_snapshot: TurnSnapshot) -> str:
+    """Full text of the workspace entries that match this turn's request."""
+    from core.domain.knowledge import render_relevant_workspace_entries
+
+    if not turn_snapshot.long_term_memory_enabled:
+        return ""
+    rendered = render_relevant_workspace_entries(
+        turn_snapshot.text,
+        context=(
+            *turn_snapshot.active_vcs_repositories.values(),
+            *turn_snapshot.configured_integrations,
+        ),
+    )
+    if not rendered:
+        return ""
+    return (
+        "RELEVANT WORKSPACE KNOWLEDGE (organization-wide entries that match this "
+        "request, most relevant first; they may be out of date):\n"
         f"{rendered}\n\n"
     )
 
@@ -479,38 +586,49 @@ def relevant_memories_block(turn_snapshot: TurnSnapshot) -> str:
     )
 
 
-def build_action_user_message(text: str, *, prefix: str = "") -> str:
-    """Wrap the user turn; optional ``prefix`` carries ephemeral system halves.
+def session_context_section(context: str) -> str:
+    """The session-context section a user message carries; ``""`` when ``context`` is empty."""
+    return "".join((SESSION_CONTEXT_HEADER, context)) if context else ""
 
-    ``prefix`` is where per-turn conversation / prior-action-facts land once the
-    action driver opts into :meth:`PromptEnvelope.render_cached` — the same text
-    the model used to see at the end of ``system``, moved here so the cached
-    system prefix stays byte-stable across turns.
+
+def build_action_user_message(text: str, *, context: str = "", prefix: str = "") -> str:
+    """Wrap the user turn with the parts of the prompt that stay out of ``system``.
+
+    ``context`` is the envelope's session-context layer, given only when the
+    replayed history does not already carry it: the history replays the user
+    message verbatim, so an unchanged section is never sent twice. ``prefix``
+    is the ephemeral layer (this turn's plan, facts and memories). Neither sits
+    in ``system``, so the cached system prefix stays byte-stable across turns.
 
     Layout (required by head-preserving truncation ``text[:keep]``):
 
     1. Literal user message first — never drop the active request.
-    2. Ephemeral history next, newest-first — when the combined turn is over
-       budget, the tail cut removes the oldest chatter, not the latest turns
-       the follow-up is referring to.
+    2. Session context, then the ephemeral blocks: the order the model read them
+       in when they were part of the system prompt. In the text-history fallback
+       the conversation rides last, newest-first, so a tail cut over budget
+       removes the oldest chatter, not the latest turns a follow-up refers to.
     """
     body = _USER_TEMPLATE.format(text=sanitize_action_text(text.strip()))
-    if not prefix:
+    if not context and not prefix:
         return body
     # Ephemeral history can be large; join avoids an intermediate f-string copy.
-    return "".join((body, "\n", prefix))
+    return "".join((body, "\n", session_context_section(context), prefix))
 
 
-def action_prompt_skill_and_context(envelope: PromptEnvelope) -> tuple[str, str]:
-    """Split the per-turn half into the active skill body and the other context.
+def action_prompt_skill_and_context(
+    envelope: PromptEnvelope, *, session_context: str = ""
+) -> tuple[str, str]:
+    """Split this turn's model context into the active skill body and the rest.
 
-    The cached system prompt is recorded separately. The active skill rides in
-    the ephemeral half only while the user is answering that skill; everything
-    else in that half (conversation, plan, facts) is the model context.
+    The cached system prompt is recorded separately. ``session_context`` is the
+    session-context layer this turn's message carried (``""`` when the history
+    already held it). The active skill rides in the ephemeral layer only while
+    the user is answering that skill; everything else (session context,
+    conversation, plan, facts) is the model context.
     """
     skill = envelope.block(PromptBlockId.ACTIVE_SKILL)
     skill_text = skill.render().strip() if skill is not None else ""
-    context = envelope.render_ephemeral()
+    context = "".join((session_context_section(session_context), envelope.render_ephemeral()))
     if skill_text:
         context = context.replace(skill_text, "", 1)
     return skill_text, context.strip()
@@ -523,13 +641,17 @@ def sanitize_action_text(text: str) -> str:
 
 
 __all__ = [
+    "SESSION_CONTEXT_HEADER",
     "build_action_system_prompt_envelope",
     "build_action_system_prompt",
     "action_prompt_skill_and_context",
     "build_action_user_message",
+    "session_context_section",
     "connected_integrations_block",
     "interrupted_turn_recovery_block",
     "long_term_memory_block",
+    "relevant_workspace_knowledge_block",
+    "workspace_knowledge_block",
     "prior_action_facts_block",
     "recent_conversation_block",
     "relevant_memories_block",

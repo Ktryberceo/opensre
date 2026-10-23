@@ -78,6 +78,12 @@
         ]
       },
       {
+        "group": "Guides",
+        "pages": [
+          "guides/otel-payment-triage"
+        ]
+      },
+      {
         "group": "Run it anywhere",
         "pages": [
           "guides/deployment",
@@ -98,7 +104,6 @@
           "platform/principal-scoped-storage",
           "platform/memory",
           "platform/work-management",
-          "platform/fleet",
           "platform/cron",
           "platform/closed-loop-learning"
         ]
@@ -126,8 +131,7 @@
               "integrations/monitoring/signoz",
               "integrations/monitoring/splunk",
               "integrations/monitoring/tempo",
-              "integrations/monitoring/victoria_logs",
-              "integrations/monitoring/x-mcp"
+              "integrations/monitoring/victoria_logs"
             ]
           },
           {
@@ -137,7 +141,6 @@
               "integrations/incidents/alertmanager",
               "integrations/incidents/runbook-guided-investigations",
               "integrations/incidents/incident_io",
-              "integrations/incidents/opsgenie",
               "integrations/incidents/pagerduty",
               "integrations/incidents/sentry",
               "integrations/incidents/sentry-mcp",
@@ -157,7 +160,6 @@
               "integrations/cloud/elb",
               "integrations/cloud/helm",
               "integrations/cloud/kubernetes",
-              "integrations/cloud/yandex-cloud",
               "integrations/cloud/railway",
               "integrations/cloud/s3",
               "integrations/cloud/sqs_queues",
@@ -462,10 +464,6 @@
       "destination": "/integrations/incidents/fix-sentry-issue"
     },
     {
-      "source": "/fleet",
-      "destination": "/platform/fleet"
-    },
-    {
       "source": "/github",
       "destination": "/integrations/code/github"
     },
@@ -658,10 +656,6 @@
       "destination": "/integrations/databases/opensearch"
     },
     {
-      "source": "/opsgenie",
-      "destination": "/integrations/incidents/opsgenie"
-    },
-    {
       "source": "/pagerduty",
       "destination": "/integrations/incidents/pagerduty"
     },
@@ -796,14 +790,6 @@
     {
       "source": "/work-management",
       "destination": "/platform/work-management"
-    },
-    {
-      "source": "/x-mcp",
-      "destination": "/integrations/monitoring/x-mcp"
-    },
-    {
-      "source": "/yandex-cloud",
-      "destination": "/integrations/cloud/yandex-cloud"
     }
   ],
   "seo": {

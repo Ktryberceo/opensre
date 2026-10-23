@@ -19,6 +19,7 @@ import os
 import signal
 import threading
 from collections.abc import Callable
+from time import monotonic
 from typing import Any
 
 from rich.console import Console
@@ -26,8 +27,12 @@ from rich.console import Console
 from config.constants.gateway import (
     CREDENTIAL_REFRESH_INTERVAL_SECONDS,
     CREDENTIAL_REFRESH_JOIN_TIMEOUT_SECONDS,
+    KNOWLEDGE_THREAD_JOIN_TIMEOUT_SECONDS,
     SCHEDULER_RELOAD_JOIN_TIMEOUT_SECONDS,
     SCHEDULER_STOP_BUDGET_SHARE,
+    WEBAPP_LOOP_REPORT_INTERVAL_SECONDS,
+    WEBAPP_LOOP_SYNC_INTERVAL_SECONDS,
+    WEBAPP_LOOP_SYNC_JOIN_TIMEOUT_SECONDS,
 )
 from core.agent_harness.ports import SlashPortsFactory
 from gateway import startup as gateway_startup
@@ -92,6 +97,12 @@ class GatewayController:
         self._scheduler_runners: Any = None
         self._scheduler_reload_thread: threading.Thread | None = None
         self._credential_refresh_thread: threading.Thread | None = None
+        self._webapp_loop_sync_thread: threading.Thread | None = None
+        #: Set to sync with the web app now rather than at the next poll.
+        self._webapp_loop_sync_wake = threading.Event()
+        self._webapp_loop_sync: Any = None
+        self._knowledge_scans: Any = None
+        self._knowledge_threads: list[threading.Thread] = []
         self._credential_hydrator: GatewayCredentialHydrator | None = None
         self.components: dict[str, str] = {}
         self._slash_ports_factory = slash_ports_factory
@@ -158,7 +169,10 @@ class GatewayController:
     ) -> None:
         """Start web + every chat transport together (via :mod:`gateway.startup`)."""
         self.surfaces = gateway_startup.start_gateway(
-            logger=logger, handler=handler, prompt_runner=prompt_runner
+            logger=logger,
+            handler=handler,
+            prompt_runner=prompt_runner,
+            loop_sync_wake=self.request_webapp_loop_sync,
         )
         self.components.update(self.surfaces.statuses)
 
@@ -189,6 +203,8 @@ class GatewayController:
             self.scheduler = scheduler
             self.components["scheduler"] = f"running {task_count} scheduled task(s)"
         self._start_scheduler_reload_watcher(logger)
+        self._start_webapp_loop_sync(logger)
+        self._start_knowledge()
 
     def stop(self, *, timeout: float | None = None) -> bool:
         """Shut down all components and return whether the chat workers stopped.
@@ -202,6 +218,7 @@ class GatewayController:
         budget = ShutdownBudget(seconds)
         set_ready(False)
         self._stopped.set()
+        self._webapp_loop_sync_wake.set()
         stopped = True
         if self._scheduler_reload_thread is not None:
             started = budget.mark()
@@ -210,6 +227,21 @@ class GatewayController:
             )
             budget.consume(started)
             self._scheduler_reload_thread = None
+        if self._webapp_loop_sync_thread is not None:
+            started = budget.mark()
+            self._webapp_loop_sync_thread.join(
+                timeout=budget.take(WEBAPP_LOOP_SYNC_JOIN_TIMEOUT_SECONDS)
+            )
+            budget.consume(started)
+            self._webapp_loop_sync_thread = None
+        if self._knowledge_threads:
+            if self._knowledge_scans is not None:
+                self._knowledge_scans.poke()  # wake the scan loop so it sees the stop
+            for thread in self._knowledge_threads:
+                started = budget.mark()
+                thread.join(timeout=budget.take(KNOWLEDGE_THREAD_JOIN_TIMEOUT_SECONDS))
+                budget.consume(started)
+            self._knowledge_threads = []
         if self._credential_refresh_thread is not None:
             started = budget.mark()
             self._credential_refresh_thread.join(
@@ -218,12 +250,17 @@ class GatewayController:
             budget.consume(started)
             self._credential_refresh_thread = None
         scheduled_jobs_finished = True
+        started = budget.mark()
+        scheduler_seconds = budget.remaining * SCHEDULER_STOP_BUDGET_SHARE
         if self.scheduler is not None:
-            started = budget.mark()
-            scheduler_seconds = budget.remaining * SCHEDULER_STOP_BUDGET_SHARE
             scheduled_jobs_finished = _shut_scheduler_down(self.scheduler, scheduler_seconds)
-            budget.consume(started)
             self.scheduler = None
+        if self._webapp_loop_sync is not None:
+            # Runs started from the app's Run now share the scheduled jobs' window.
+            left = max(0.0, scheduler_seconds - (budget.mark() - started))
+            runs_finished = self._webapp_loop_sync.drain_runs(left)
+            scheduled_jobs_finished = scheduled_jobs_finished and runs_finished
+        budget.consume(started)
         if self.surfaces is not None:
             stopped = self.surfaces.stop(timeout=budget.remaining) and stopped
             self.surfaces = None
@@ -294,6 +331,94 @@ class GatewayController:
         )
         self._scheduler_reload_thread.start()
 
+    def _start_webapp_loop_sync(self, logger: logging.Logger) -> None:
+        """Apply Tasks-page changes from the web app and report this gateway's loops.
+
+        Only a hosted organization's gateway has the web app to sync with; the
+        loops it changes are picked up by the reload watcher like any other. A
+        member's "run it now" in chat starts its run here too, beside the app's.
+        """
+        from bootstrap.adapters import webapp_loop_sync
+        from infrastructure.scheduling.scheduler.run_now import install_loop_run_starter
+
+        sync = webapp_loop_sync(self._scheduler_runners)
+        if sync is None or self._webapp_loop_sync_thread is not None:
+            return
+        self._webapp_loop_sync = sync
+        install_loop_run_starter(sync.start_run)
+
+        wake = self._webapp_loop_sync_wake
+
+        def _watch() -> None:
+            next_poll = monotonic()
+            while not self._stopped.is_set():
+                poll_requested = wake.is_set() or monotonic() >= next_poll
+                if poll_requested:
+                    # Cleared before the pass, so a nudge that lands mid-pass runs another.
+                    wake.clear()
+                # stop() sets both events; if it landed just before the clear,
+                # its wake is gone, so check again rather than sleep the interval.
+                if self._stopped.is_set():
+                    break
+                try:
+                    if poll_requested:
+                        next_poll = monotonic() + WEBAPP_LOOP_SYNC_INTERVAL_SECONDS
+                        sync.sync()
+                    else:
+                        sync.report()
+                except Exception as exc:  # noqa: BLE001 - keep syncing after one bad pass
+                    logger.warning("[gateway] web app task sync failed (%s)", type(exc).__name__)
+                wake.wait(WEBAPP_LOOP_REPORT_INTERVAL_SECONDS)
+
+        self.components["webapp_tasks"] = "syncing with the web app"
+        self._webapp_loop_sync_thread = threading.Thread(
+            target=_watch, name="opensre-webapp-loop-sync", daemon=True
+        )
+        self._webapp_loop_sync_thread.start()
+
+    def request_webapp_loop_sync(self) -> bool:
+        """Sync with the web app now (its change nudge); False when this gateway has no sync."""
+        if self._webapp_loop_sync_thread is None:
+            return False
+        self._webapp_loop_sync_wake.set()
+        return True
+
+    def _start_knowledge(self) -> None:
+        """Keep workspace knowledge current and mirror it to the web app's Knowledge page.
+
+        Scans run whenever workspace knowledge is on; the mirror only on a
+        hosted organization's gateway. Neither blocks startup: a scan of a
+        newly connected integration starts on the next pass.
+        """
+        if self._knowledge_threads:
+            return
+        from bootstrap.adapters import knowledge_scan_service, webapp_knowledge_sync
+
+        scans = self._knowledge_scans = knowledge_scan_service()
+        if scans is not None:
+            self.components["knowledge_scans"] = "scanning connected integrations"
+            self._knowledge_threads.append(
+                threading.Thread(
+                    target=scans.run_forever,
+                    args=(self._stopped,),
+                    name="opensre-knowledge-scans",
+                    daemon=True,
+                )
+            )
+        sync = webapp_knowledge_sync(scans)
+        if sync is not None:
+            self.components["webapp_knowledge"] = "syncing with the web app"
+            self._knowledge_threads.append(
+                threading.Thread(
+                    target=sync.run_forever,
+                    args=(self._stopped,),
+                    name="opensre-webapp-knowledge-sync",
+                    daemon=True,
+                )
+            )
+        for thread in self._knowledge_threads:
+            thread.start()
+
     def _start_credential_refresh_watcher(self, logger: logging.Logger) -> None:
         """Pick up a credential saved in the web app without a restart.
 
@@ -309,6 +434,9 @@ class GatewayController:
                 return
             self.components["credentials"] = "hydrated (reloaded)"
             logger.info("[gateway] integrations reloaded from the organization's secret")
+            if self._knowledge_scans is not None:
+                # A newly connected integration has no knowledge yet: scan it now.
+                self._knowledge_scans.poke()
             self._publish_status(logger)
 
         def _watch() -> None:
@@ -335,6 +463,7 @@ class GatewayController:
             self.scheduler, self._scheduler_runners
         )
         self.scheduler = scheduler
+        self._report_loops_to_webapp(logger)
         if scheduler is None:
             self.components["scheduler"] = "idle (no scheduled tasks)"
             logger.info("Scheduler idle after reload (no enabled tasks)")
@@ -342,6 +471,20 @@ class GatewayController:
             self.components["scheduler"] = f"running {task_count} scheduled task(s)"
             logger.info("Scheduler reloaded with %d task(s)", task_count)
         self._publish_status(logger)
+
+    def _report_loops_to_webapp(self, logger: logging.Logger) -> None:
+        """Tell the web app's Tasks page about a loop change right away.
+
+        The task store changed (a loop created, edited or stopped here), so the
+        report is sent now instead of on the next slow poll. Unchanged lists
+        cost nothing: the sync compares before it calls the web app.
+        """
+        if self._webapp_loop_sync is None:
+            return
+        try:
+            self._webapp_loop_sync.report()
+        except Exception as exc:  # noqa: BLE001 - a failed report must not stop the reload
+            logger.warning("[gateway] web app task report failed (%s)", type(exc).__name__)
 
     def _publish_status(self, logger: logging.Logger) -> None:
         GATEWAY_PID_FILE.parent.mkdir(parents=True, exist_ok=True)

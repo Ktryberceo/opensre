@@ -219,10 +219,6 @@ class _AskOutputSink:
         """Mark that the real agent turn drove this sink."""
         self._completed_turn = True
 
-    def clear_rendered_event(self) -> None:
-        """Discard a prior outer turn's response before the next one starts."""
-        self._rendered_event = ""
-
     @property
     def rendered_response(self) -> str:
         """Return only the response or error the interactive terminal would render."""

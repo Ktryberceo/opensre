@@ -8,12 +8,14 @@ from listener timing or wall-clock time inside the callback.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import signal
 import sqlite3
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -42,6 +44,8 @@ from infrastructure.scheduling.scheduler.reload_signal import (
     watch_and_reconcile,
 )
 from infrastructure.scheduling.scheduler.runners import SchedulerRunners
+from infrastructure.scheduling.scheduler.schedule_cancel import running_despite_pause
+from infrastructure.scheduling.scheduler.schedule_change import obsolete_schedule_tick
 from infrastructure.scheduling.scheduler.storage import (
     complete_run,
     default_task_store_path,
@@ -49,10 +53,11 @@ from infrastructure.scheduling.scheduler.storage import (
     get_recoverable_runs,
     get_task,
     list_tasks,
+    patch_scheduler_task,
     record_task_success,
+    retire_pending_runs,
     try_claim,
     try_queue_run,
-    update_task,
 )
 from infrastructure.scheduling.scheduler.types import (
     Provider,
@@ -208,7 +213,11 @@ def _scheduled_job(
         complete_run(claim, status=TaskStatus.SKIPPED, error="disabled")
         return
 
-    result = execute_task(task, fire_time, runners)
+    if obsolete_schedule_tick(task, fire_time) and retire_pending_runs(
+        (task.id,), reason="schedule_changed", fire_time=fire_time
+    ):
+        return
+    result = execute_task(task, fire_time, runners, scheduled=True)
 
     if result:
         _record_task_success_after_full_delivery(task.id, fire_time)
@@ -271,7 +280,11 @@ def _recover_runs(
         if task is None or not task.enabled:
             _complete_recoverable_as_skipped(run, task)
             continue
-        result = execute_task(task, run.fire_time, runners)
+        if obsolete_schedule_tick(task, run.fire_time) and retire_pending_runs(
+            (task.id,), reason="schedule_changed", fire_time=run.fire_time
+        ):
+            continue
+        result = execute_task(task, run.fire_time, runners, scheduled=True)
         if result:
             _record_task_success_after_full_delivery(task.id, run.fire_time)
         logger.info(
@@ -387,6 +400,37 @@ def _limit_prompt_loop_rate(task: ScheduledTask) -> None:
     task.cron = capped
 
 
+@dataclass(frozen=True, slots=True)
+class _JobRegistration:
+    trigger: Any
+    next_run: str | None
+    immediate: datetime | None = None
+    missed: datetime | None = None
+
+
+def _prepare_job_registration(
+    task: ScheduledTask, now: datetime, *, catch_up: bool
+) -> _JobRegistration:
+    """Prepare progress and trigger together from one locked current definition."""
+    previous_cron = task.cron
+    _limit_prompt_loop_rate(task)
+    trigger = _make_trigger(task)
+    if task.cron != previous_cron:
+        # The old faster next_run cannot be an hourly catch-up slot.
+        task.next_run = _next_run_from_trigger(trigger, now)
+    immediate = _immediate_ci_repair_fire(task, now)
+    missed: datetime | None = None
+    if immediate is None and catch_up:
+        immediate = missed = _missed_fire(task, trigger, now)
+    next_run: str | None
+    if immediate is not None:
+        # Keep the stored due time until this tick finishes.
+        next_run = immediate.isoformat()
+    else:
+        next_run = task.next_run = _next_run_from_trigger(trigger, now)
+    return _JobRegistration(trigger, next_run, immediate, missed)
+
+
 def _register_jobs(
     scheduler: Any,
     runners: SchedulerRunners,
@@ -402,44 +446,31 @@ def _register_jobs(
     """
     enabled_count = 0
     now = datetime.now(UTC)
-    for task in list_tasks():
-        if not task.enabled:
-            continue
-        if task_filter is not None and not task_filter(task):
-            continue
-        previous_cron = task.cron
+    for listed_task in list_tasks():
+        registration: _JobRegistration | None = None
+
+        def _registration_patch(current: ScheduledTask) -> dict[str, object]:
+            nonlocal registration
+            if not current.enabled or (task_filter is not None and not task_filter(current)):
+                return {}
+            registration = _prepare_job_registration(current, now, catch_up=catch_up)
+            return {"cron": current.cron, "next_run": current.next_run}
+
         try:
-            _limit_prompt_loop_rate(task)
-            trigger = _make_trigger(task)
+            current_task = patch_scheduler_task(listed_task.id, _registration_patch)
         except ValueError as exc:
-            logger.error("Skipping task %s: %s", task.id, exc)
+            logger.error("Skipping task %s: %s", listed_task.id, exc)
             continue
-        if task.cron != previous_cron:
-            # Persist before catch-up. A 15-minute next_run must not be treated
-            # as a missed hourly slot, and a restart must keep the coarser cron.
-            task.next_run = _next_run_from_trigger(trigger)
-            update_task(task)
-        immediate = _immediate_ci_repair_fire(task, now)
-        missed: datetime | None = None
-        if immediate is None and catch_up:
-            immediate = missed = _missed_fire(task, trigger, now)
+        if current_task is None or registration is None:
+            continue
+        task = current_task
         job_kwargs: dict[str, Any] = {}
-        next_run: str | None
-        if immediate is not None:
-            # Fire the due time now and keep the stored next run: the trigger
-            # alone resumes at its next slot, and storing that slot would hide
-            # this fire from a re-registration before it runs.
-            next_run = immediate.isoformat()
-            job_kwargs["next_run_time"] = immediate
-        else:
-            next_run = _next_run_from_trigger(trigger)
-            if task.next_run != next_run:
-                task.next_run = next_run
-                update_task(task)
+        if registration.immediate is not None:
+            job_kwargs["next_run_time"] = registration.immediate
 
         scheduler.add_job(
             _scheduled_job,
-            trigger=trigger,
+            trigger=registration.trigger,
             args=[task.id, runners],
             id=task.id,
             name=f"{task.kind.value}:{task.id}",
@@ -449,18 +480,18 @@ def _register_jobs(
             **job_kwargs,
         )
         enabled_count += 1
-        registration: dict[str, Any] = {"next_run": next_run}
-        if missed is not None:
-            registration["missed_fire_time"] = _compute_fire_time(missed)
+        operation_details: dict[str, Any] = {"next_run": registration.next_run}
+        if registration.missed is not None:
+            operation_details["missed_fire_time"] = _compute_fire_time(registration.missed)
             logger.info(
                 "Catching up task %s fire_time=%s, missed while no scheduler ran",
                 task.id,
-                registration["missed_fire_time"],
+                operation_details["missed_fire_time"],
             )
         record_scheduler_task_operation(
             "scheduler_job_registered",
             task,
-            extra=registration,
+            extra=operation_details,
         )
         logger.info(
             "Registered task %s (%s) with cron=%s tz=%s",
@@ -665,6 +696,7 @@ def run_task_now(
     runners: SchedulerRunners,
     *,
     only_failed: bool = False,
+    run_paused: bool = False,
     on_result: Callable[[TaskRun], None] | None = None,
 ) -> bool:
     """Execute a task immediately (ad-hoc one-shot for debugging).
@@ -682,6 +714,10 @@ def run_task_now(
     one direction that causes harm the operator did not ask for (a duplicate
     report at a destination that already received it), and a caller that does
     want every destination has one -- an ordinary run without ``only_failed``.
+
+    ``run_paused=True`` runs a disabled task too, and a pause during the run
+    does not cancel it; the task stays disabled. Without it a disabled task is
+    skipped, as a scheduled tick would be.
     """
     task = get_task(task_id)
     if task is None:
@@ -713,14 +749,15 @@ def run_task_now(
             return False
 
     fire_time = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    result = execute_task(
-        task,
-        fire_time,
-        runners,
-        target_filter=target_filter,
-        replay_report=replay_report,
-        on_result=on_result,
-    )
+    with running_despite_pause(task.id) if run_paused else contextlib.nullcontext():
+        result = execute_task(
+            task,
+            fire_time,
+            runners,
+            target_filter=target_filter,
+            replay_report=replay_report,
+            on_result=on_result,
+        )
     if result:
         _record_task_success_after_full_delivery(task.id, fire_time)
     return result

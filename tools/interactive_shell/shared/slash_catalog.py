@@ -191,12 +191,6 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         "Exit the interactive shell and return to the parent terminal.",
         "User asks to exit, quit, or leave the REPL",
     ),
-    "/fleet": _mcp(
-        "Show and manage the local AI agent fleet (Claude Code, Cursor, Aider, etc.). "
-        "Subcommands include budget, bus, claim, conflicts, kill, release, trace, wait, graph.",
-        "User asks to list, scan, or manage local coding agents",
-        anti_examples=("User asks about remote/hosted agents only",),
-    ),
     "/gateway": _mcp(
         "Control the background OpenSRE gateway daemon (web health app, Telegram chat, "
         "task scheduler). Subcommands: start, stop, status, logs [lines].",
@@ -204,9 +198,10 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         anti_examples=("User asks to send a single Telegram message (use messaging tools)",),
     ),
     "/goal": _mcp(
-        "Show, set, or clear the session goal that keeps a multi-step ask "
-        "running across turns. Subcommands: show, set, clear.",
-        "User asks to set, inspect, or clear an ongoing goal for the session",
+        "Show, set, edit, pause, resume, or clear the session goal that keeps a multi-step ask "
+        "running across turns. Bare edit reviews the current condition in an interactive terminal; "
+        "edit <condition> changes it directly while preserving its turn budget.",
+        "User asks to set, inspect, edit, pause, resume, or clear an ongoing goal for the session",
         anti_examples=("User wants a durable todo list item (use /work)",),
     ),
     "/guardrails": _mcp(
@@ -244,7 +239,7 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         ),
     ),
     "/login": _mcp(
-        "Shortcut for /auth login. Supports subscription aliases chatgpt and claude, "
+        "Shortcut for /auth login. Supports ChatGPT subscription browser login "
         "and API-key providers such as deepseek.",
         "User asks to log in to ChatGPT, Claude, DeepSeek, or another LLM provider",
         anti_examples=(
@@ -264,10 +259,21 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
             "User asks to log in to an LLM provider (use /login)",
         ),
     ),
+    "/knowledge": _mcp(
+        "Show the organization's workspace knowledge (profile, scanned integrations), "
+        "check memory health, or scan connected integrations. "
+        "Subcommands: show <name>, audit, scan [service].",
+        "User explicitly asks to list or show workspace knowledge via /knowledge",
+        "User asks to audit memory quality or rescan Slack into workspace knowledge",
+        anti_examples=(
+            "User asks what the agent knows about the organization (use memory_recall)",
+            "User asks to list or forget their own memories (use /memory)",
+        ),
+    ),
     "/loops": _mcp(
         "List, create, stop, start, delete, run once, and debug recurring prompt loops, "
         "including latest findings, execution status, and next fire time. "
-        "Subcommands: list, active, all, add, run [id], stop [id], start [id], delete [id], "
+        "Subcommands: list, active, all, add, edit [name-or-id], run [id], stop [id], start [id], delete [id], "
         "show [name-or-id] [--run <run-id>], next [id], messages, service [install|remove]. "
         "Prefer a supplied target ID for direct execution. In the interactive terminal, "
         "omitting an action target opens a searchable picker; run and delete require explicit "
@@ -281,6 +287,7 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         "User asks when configured loops will run next",
         "User asks what a loop found or wants to read its full report",
         "User asks to set up a manual recurring loop from a prompt",
+        "User asks to edit an existing recurring loop's name, prompt, or schedule",
         "User asks to add a loop and execute it once immediately",
         "User asks to stop, disable, resume, start, delete, or remove a recurring loop",
         "User explicitly requests a loop action and wants to choose its target interactively",
@@ -291,7 +298,7 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
     "/mcp": _mcp(
         "Manage connected MCP servers. Subcommands: list, connect, disconnect.",
         "User asks to list, connect, or disconnect MCP servers",
-        anti_examples=("User asks about remote deployments or remote agents (use /remote)",),
+        anti_examples=("User asks about remote deployments or remote agents (assistant_handoff)",),
     ),
     "/memory": _mcp(
         "List and manage the agent's long-term memory. "
@@ -303,8 +310,10 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         ),
     ),
     "/messaging": _mcp(
-        "Manage messaging security and Telegram identities. Subcommands: pair, allow, revoke, status.",
-        "User asks about Telegram pairing, messaging allowlist, or messaging status",
+        "Manage inbound identities for Telegram, Slack, Discord, and Buzz. "
+        "Subcommands: pair, allow, revoke, status. All require --platform; "
+        "allow and revoke also require --user-id. Interactive terminals collect omitted values.",
+        "User asks about messaging pairing, allowlists, revocation, or security status",
     ),
     "/model": _mcp(
         "Explicit /model command operations: show the model table, open the model menu, "
@@ -342,12 +351,13 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         "User asks to quit the REPL",
     ),
     "/remote": _mcp(
-        "Connect to, list, and operate remote deployed OpenSRE agents. "
-        "Subcommands: health, ops, pull, trigger.",
-        "User explicitly asks to connect to a remote/hosted/EC2/Nitro OpenSRE instance",
-        "User asks how many remote deployments are configured or wants to inspect a remote agent",
-        "User asks about remote deployment status, health, or operations",
-        anti_examples=("Vague connect to X without remote/hosted context (clarify the target)",),
+        "Remote-agent operations are unavailable in this build. "
+        "Running /remote records a failure and preserves the interactive shell.",
+        "User explicitly types /remote",
+        anti_examples=(
+            "User asks about remote deployments or deployed agents (assistant_handoff)",
+            "User asks to sync sessions or memory (use /remote-sync)",
+        ),
     ),
     "/rename": _mcp(
         "Rename the current session with /rename <name>; "
@@ -444,6 +454,12 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         "User asks to change the REPL color theme or palette",
         anti_examples=("User asks about light/dark mode in a web UI",),
     ),
+    "/triage": _mcp(
+        "Read complete retained OTel incident reports with reports --state <file>. "
+        "The foreground telemetry watch must run separately, not inside the REPL.",
+        "User explicitly asks to display retained telemetry triage reports",
+        anti_examples=("User asks to start a continuous watch or investigate live telemetry",),
+    ),
     "/trust": _mcp(
         "Enable or disable trust mode (skip execution confirmation prompts). on | off.",
         "User asks to enable or disable trust mode or auto-approve",
@@ -475,12 +491,12 @@ MCP_BY_COMMAND: dict[str, _SlashMcpFields] = {
         "User asks for version information",
     ),
     "/work": _mcp(
-        "Manage durable human work items. Subcommands: list, add, done, next, path. "
+        "Manage durable human work items. Subcommands: list, add, edit [id-or-title], done, next, path. "
         "Prefer explicit completion IDs; done or complete without a target opens a searchable "
         "unfinished-item picker in the interactive terminal. Noninteractive completion requires "
         "one or more targets. "
         "Reminder delivery requires the destination-aware work_task_* tools or opensre work CLI.",
-        "User explicitly types /work to list, add, complete, or prioritize work items",
+        "User explicitly types /work to list, add, edit, complete, or prioritize work items",
         "User asks for a durable task list or hackathon task overview via the slash command",
         anti_examples=(
             "User asks to manage OpenSRE runtime background jobs (use /tasks)",
@@ -612,9 +628,9 @@ def slash_invoke_tool_description(specs: list[SlashCommandSpec] | None = None) -
         "only the slash-command clause of a request. For compound requests, "
         "still emit a separate tool call for every other actionable clause in "
         "order; for example "
-        "`run /remote and then send a summary to Slack` requires "
-        'slash_invoke(command="/remote", args=[]) followed by the '
-        "Slack send-message tool call."
+        '`run /sessions and then investigate "hello world"` requires '
+        'slash_invoke(command="/sessions", args=[]) followed by '
+        'an investigation of "hello world" using the available investigation tools.'
     )
     # Keep planner payload intentionally tiny for live LLM runs with strict
     # prompt budgets. The full rich catalog remains available via

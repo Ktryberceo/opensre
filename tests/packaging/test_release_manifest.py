@@ -23,7 +23,7 @@ def test_hidden_imports_cover_runtime_discovered_tool_packages() -> None:
     hidden_imports = set(runtime_hidden_imports(_REPO_ROOT))
 
     assert set(INTEGRATION_TOOL_PACKAGES) <= hidden_imports
-    assert "integrations.x_mcp.tools.x_mcp_tool" in hidden_imports
+    assert "integrations.sentry_mcp.tools.sentry_mcp_tool" in hidden_imports
     assert "tools.system.work_items" in hidden_imports
     assert "tools.system.work_items.tool" in hidden_imports
 
@@ -93,19 +93,11 @@ def test_release_includes_executable_skill_helpers_and_their_reference() -> None
 
 
 def test_required_data_covers_runtime_files_that_are_not_skill_documents() -> None:
-    """Runtime file loading breaks or degrades when data is left out of the build.
-
-    The task-plan loader requires adjacent Markdown or fails the turn outright.
-    ``find_yc_api`` reads its endpoint index from a JSON file rather than a
-    document, so the ``SKILL.md`` globs above do not reach it. Left out, the
-    tool reports no endpoints at all instead of failing to import, which reads
-    as "Yandex Cloud exposes nothing" rather than as a broken artifact.
-    """
+    """Loop templates must be bundled alongside skill documents."""
     relative_paths = {
         path.relative_to(_REPO_ROOT).as_posix() for path in required_skill_files(_REPO_ROOT)
     }
 
-    assert "integrations/yandex_cloud/api_index.json" in relative_paths
     assert "core/agent_harness/prompts/loop_templates/pr-ci.md" in relative_paths
     assert "core/agent_harness/task_plan/planning_instructions.md" not in relative_paths
 

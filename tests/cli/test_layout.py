@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import click
+import pytest
 
 from surfaces.cli.app import cli
 from surfaces.cli.layout import (
@@ -91,6 +92,55 @@ def test_every_row_keeps_a_gap_between_command_and_description() -> None:
 
     for label, description in _LANDING_EXAMPLES:
         assert f"{label} " in output, f"{label!r} runs straight into {description!r}"
+
+
+def _lines_after(output: str, marker: str) -> list[str]:
+    lines = output.splitlines()
+    start = next(index for index, line in enumerate(lines) if marker in line)
+    return lines[start:]
+
+
+@pytest.mark.parametrize("columns", [40, 80])
+def test_wrapped_help_rows_keep_their_indent(monkeypatch, capsys, columns: int) -> None:
+    """A wrapped description continues under its column, never at column 0."""
+    monkeypatch.setenv("COLUMNS", str(columns))
+
+    render_help(cli)
+    help_lines = _lines_after(capsys.readouterr().out, "Usage:")
+    render_landing(cli)
+    landing_lines = _lines_after(capsys.readouterr().out, "Usage:")
+
+    for line in help_lines + landing_lines:
+        assert not line or line.startswith("  "), f"{line!r} wrapped to column 0"
+        assert len(line) <= columns, f"{line!r} is wider than {columns} columns"
+
+
+@pytest.mark.parametrize(
+    ("console_width", "label_indent", "description_column"),
+    [
+        # Side by side: 4-cell indent, then the label column (10 + 2 gap).
+        (60, 4, 16),
+        # Too narrow for a readable description column: label above, text 4 cells in.
+        (30, 4, 8),
+    ],
+)
+def test_a_wrapped_description_starts_at_its_exact_column(
+    console_width: int, label_indent: int, description_column: int
+) -> None:
+    from rich.console import Console
+
+    from surfaces.cli.layout import _render_rows
+
+    console = Console(force_terminal=False, width=console_width, record=True)
+    _render_rows(console, title="Rows", rows=[("cmd", "word " * 30)], width=10)
+    lines = console.export_text().splitlines()[1:]
+
+    label_line = next(line for line in lines if "cmd" in line)
+    assert label_line.index("cmd") == label_indent
+    description_lines = [line for line in lines if "word" in line]
+    assert len(description_lines) > 1
+    for line in description_lines:
+        assert line.index("word") == description_column, line
 
 
 def test_rich_group_format_help_delegates_to_render_help(monkeypatch) -> None:

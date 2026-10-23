@@ -7,6 +7,9 @@ from typing import Any
 import httpx
 import pytest
 
+from config.principal import Actor, Principal, StorageScope
+from config.scope_context import bound_storage_scope
+from gateway.core.billing import turn_metering
 from gateway.core.billing.credits_client import CreditsOutcome, consume_credits
 
 _URL_ENV = "OPENSRE_WEBAPP_URL"
@@ -270,3 +273,31 @@ def test_creditsoutcome_is_strenum_with_identical_values() -> None:
         assert member.value == expected
         assert member == expected
         assert isinstance(member, str)
+
+
+@pytest.mark.usefixtures("metering_on")
+def test_a_metered_turn_names_its_member_on_the_charge(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Arrange: a Slack member's turn on a gateway that meters per turn
+    monkeypatch.setattr(turn_metering, "account_llm_route", lambda: None)
+    calls: list[dict[str, Any]] = []
+
+    def capture(_url: str, **kwargs: Any) -> httpx.Response:
+        calls.append(kwargs)
+        return httpx.Response(HTTPStatus.OK, json={"balance": 1})
+
+    monkeypatch.setattr("gateway.core.billing.credits_client.httpx.post", capture)
+    scope = StorageScope(principal=Principal.org("org_x"), actor=Actor(id="U0MEMBER"))
+
+    # Act
+    with (
+        bound_storage_scope(scope),
+        turn_metering.bound_turn_metering(
+            organization_id="org_x", reason="slack_turn", idempotency_key="ts-1", on_denied=list
+        ),
+    ):
+        admitted = turn_metering.admit_metered_turn()
+
+    # Assert: Settings → Usage can chart the charge under the member who spent it
+    assert admitted is True
+    (sent,) = calls
+    assert sent["json"]["actor"] == "U0MEMBER"

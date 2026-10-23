@@ -83,20 +83,3 @@ def get_build_stamp() -> str:
     base = version or _DEV_BASE_VERSION
     sha = _git_head_sha()
     return f"{base}+{_DEV_CHANNEL}.{sha}" if sha else base
-
-
-def get_display_version() -> str:
-    """Return the clean marketing version for UI surfaces (e.g. the banner).
-
-    Drops the injected ``.YYYY.M.D+main.<sha>`` build tail that
-    :func:`get_opensre_version` carries, leaving the base semver (``0.1``). The
-    full build string stays on ``--version``, ``doctor``, and telemetry so
-    support and bug reports keep the exact build.
-    """
-    core = get_opensre_version().split("+", 1)[0]
-    kept: list[str] = []
-    for part in core.split("."):
-        if len(part) == 4 and part.isdigit():  # injected build year — stop before it
-            break
-        kept.append(part)
-    return ".".join(kept) or core

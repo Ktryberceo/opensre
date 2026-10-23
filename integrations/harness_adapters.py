@@ -19,10 +19,10 @@ def _setupable_services() -> tuple[str, ...]:
 
 
 def _fetch_webapp_vault() -> list[dict[str, Any]] | None:
-    """Webapp org integrations; the vault client imports on first use."""
-    import integrations.webapp_vault as webapp_vault
+    """Webapp integrations for this turn; the vault client imports on first use."""
+    import integrations.member_integrations as member_integrations
 
-    return webapp_vault.fetch_webapp_org_integrations()
+    return member_integrations.turn_vault_records()
 
 
 def _fleet_vault_configured() -> bool:
@@ -41,8 +41,18 @@ def _fetch_account_integrations() -> list[dict[str, Any]]:
 
 def _account_integrations_generation() -> int:
     import integrations.account_integrations as account_integrations
+    import integrations.member_integrations as member_integrations
+    import integrations.webapp_vault as webapp_vault
 
-    return account_integrations.account_integrations_generation()
+    generation = account_integrations.account_integrations_generation()
+    if webapp_vault.webapp_vault_configured():
+        # A connection added or removed in the app changes the workspace set,
+        # so every session re-resolves on its next turn: no restart needed.
+        generation = hash((generation, webapp_vault.webapp_vault_generation()))
+    member = member_integrations.member_view_stamp()
+    # Members of one Slack thread share a session; its resolved cache must not
+    # carry one member's grants into another member's turn.
+    return generation if not member else hash((generation, member))
 
 
 def _github_rest_token_resolves(resolved_integrations: Mapping[str, Any]) -> bool:
@@ -153,11 +163,9 @@ def _register_alert_source_detectors() -> None:
         register_alert_source_detector,
     )
     from integrations.grafana.alert_source_detect import detect_grafana_alert_source
-    from integrations.yandex_cloud.alert_source_detect import detect_yandex_cloud_alert_source
 
     clear_alert_source_detectors()
     register_alert_source_detector(detect_grafana_alert_source)
-    register_alert_source_detector(detect_yandex_cloud_alert_source)
 
 
 def _register_alert_source_routing() -> None:
@@ -284,7 +292,6 @@ def _register_preferred_evidence_sources() -> None:
 
 
 def _register_cli_llm_adapters() -> None:
-
     from core.llm.types import CliLLMClient, ModelType
     from infrastructure.harness_providers import CliLlmAdapters
     from integrations.llm_cli.registry import get_cli_provider_registration

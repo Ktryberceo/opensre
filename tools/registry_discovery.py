@@ -64,7 +64,6 @@ INTEGRATION_TOOL_PACKAGES: tuple[str, ...] = (
     "integrations.new_relic.tools",
     "integrations.openobserve.tools",
     "integrations.opensearch.tools",
-    "integrations.opsgenie.tools",
     "integrations.pagerduty.tools",
     "integrations.pi.tools",
     "integrations.pipedream.tools",
@@ -92,8 +91,6 @@ INTEGRATION_TOOL_PACKAGES: tuple[str, ...] = (
     "integrations.twilio.tools",
     "integrations.vercel.tools",
     "integrations.victoria_logs.tools",
-    "integrations.x_mcp.tools",
-    "integrations.yandex_cloud.tools",
 )
 
 _SKIP_MODULE_NAMES = {

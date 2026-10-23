@@ -22,7 +22,7 @@ def _literal_slash_command_text(text: str) -> str | None:
 
 
 _EXCLUSIVE_STDIN_MENU_COMMANDS: frozenset[str] = frozenset(
-    {"/history", "/memory", "/loops", "/work", "/fleet"}
+    {"/history", "/memory", "/loops", "/work"}
 )
 # These commands can print tables or open a picker even with arguments.
 # Reserve the whole command family so aliases and help topics stay covered.
@@ -37,6 +37,7 @@ _EXCLUSIVE_STDIN_COMMANDS: frozenset[str] = frozenset(
         "/demo",
         "/help",
         "/model",
+        "/messaging",
         "/tools",
         "/trust",
         "/verbose",
@@ -83,7 +84,6 @@ _EXCLUSIVE_STDIN_SUBCOMMANDS: frozenset[tuple[str, str]] = frozenset(
         # Retention asks for a missing value; show prints a history table.
         ("/history", "retention"),
         ("/history", "show"),
-        ("/fleet", "budget"),
         ("/loops", "active"),
         ("/loops", "all"),
         ("/loops", "inbox"),
@@ -147,7 +147,7 @@ def turn_needs_exclusive_stdin(text: str, _session: Session) -> bool:
     args = [arg.lower() for arg in parts[1:]]
 
     # Long ticks keep running after their short foreground reply window. Keep
-    # the prompt's cancel keys available while waiting; bare run opens editing.
+    # the prompt's cancel keys available while waiting; bare run opens a picker.
     if name == "/cron" and len(args) >= 2 and args[0] == "run" and "--help" not in args:
         return False
     if name in _WAIT_FOR_COMPLETION_COMMANDS or name in _EXCLUSIVE_STDIN_COMMANDS:

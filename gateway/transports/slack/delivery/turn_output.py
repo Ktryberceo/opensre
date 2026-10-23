@@ -27,6 +27,7 @@ from gateway.transports.slack.delivery.integration_links import (
     setup_actions_block,
 )
 from infrastructure.text.markdown import tighten_markdown_emphasis
+from infrastructure.text.plan_snapshots import strip_plan_snapshots
 from infrastructure.text.truncation import truncate
 from infrastructure.turn_host.status_messages import (
     EMPTY_RESPONSE_MESSAGE,
@@ -84,8 +85,11 @@ class SlackTurnOutput:
         self._loading_thread.start()
 
     def print(self, message: str = "") -> None:
-        if message:
-            self._note_loading(message)
+        # A settled plan checklist is a terminal overlay. Slack must not turn
+        # it into a loading line that sticks under the finished reply.
+        visible = strip_plan_snapshots(message) if message else ""
+        if visible:
+            self._note_loading(visible)
 
     def render_response_header(self, label: str) -> None:
         self._note_loading(status_from_response_label(label))
@@ -133,6 +137,11 @@ class SlackTurnOutput:
         self._show_loading()
 
     def _show_loading(self) -> None:
+        if self._loading_stop.is_set():
+            # A stopped or finished turn can still print while it unwinds;
+            # re-showing the status would put Slack's session back to
+            # "processing" under the final reply.
+            return
         setter = getattr(self._client, "set_thread_status", None)
         if not callable(setter):
             return
@@ -168,6 +177,9 @@ class SlackTurnOutput:
             logger.debug("[slack-turn-output] clear loading status failed", exc_info=True)
 
     def _finalize(self, answer: str) -> bool:
+        answer = strip_plan_snapshots(answer)
+        if not answer.strip():
+            answer = EMPTY_RESPONSE_MESSAGE
         links = self._setup_links(answer)
         final = truncate(markdown_to_slack_mrkdwn(answer), SLACK_MAX_MESSAGE_CHARS, suffix="…")
         if links:

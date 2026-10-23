@@ -12,6 +12,7 @@ from rich.console import Console
 from rich.markup import escape
 
 import surfaces.interactive_shell.command_registry.cron_cmds as cron_cmds
+import surfaces.interactive_shell.command_registry.messaging_cmds as messaging_cmds
 from config.cli_command_choices import CLI_COMMAND_CHOICES
 from config.constants import OPENSRE_PARENT_INTERACTIVE_SHELL_ENV
 from config.constants.cli_handoff import CLI_HANDOFF_FLAG
@@ -360,6 +361,13 @@ def run_cli_command(
     if session is not None and not should_capture:
         set_turn_outcome_hint(session, format_wizard_cli_outcome(args, exit_code=exit_code))
     ok = _cli_command_succeeded(exit_code)
+    if ok and args[:2] == ["auth", "login"] and not headless:
+        from core.llm.factory import reset_llm_clients
+        from surfaces.shared.llm_setup.env_sync import reload_provider_selection
+
+        if "--no-set-provider" not in args:
+            reload_provider_selection()
+        reset_llm_clients()
     if session is not None and not ok and not backgrounded:
         session.mark_latest(ok=False, kind="slash")
     # A backgrounded tick already recorded ``still_running``. Returning True
@@ -440,12 +448,22 @@ def _cmd_account(session: Session, console: Console, args: list[str]) -> bool:  
 
 
 def _cmd_auth(session: Session, console: Console, args: list[str]) -> bool:  # noqa: ARG001
+    if args == ["login"]:
+        return _cmd_login(session, console, [])
     # ``login`` (and provider flows) prompt on the real TTY; status/logout print.
     capture_output = not args or args[0].lower() in {"status", "logout"}
     return run_cli_command(console, ["auth", *args], capture_output=capture_output, session=session)
 
 
 def _cmd_login(session: Session, console: Console, args: list[str]) -> bool:  # noqa: ARG001
+    # Show metadata-only choices before paying the child CLI's startup cost.
+    if not args and session_terminal(session) is not None:
+        from surfaces.shared.llm_setup.auth_menu import prompt_auth_provider
+
+        profile = prompt_auth_provider()
+        if profile is None:
+            return True
+        args = [profile.name]
     # Interactive provider login prompts on the real TTY.
     return run_cli_command(console, ["auth", "login", *args], capture_output=False, session=session)
 
@@ -461,14 +479,20 @@ def _validate_logout_args(args: list[str]) -> str | None:
     )
 
 
+def _cmd_remote(session: Session, console: Console, args: list[str]) -> bool:  # noqa: ARG001
+    console.print(
+        "[bold]/remote has been retired.[/bold] Remote-agent operations are unavailable "
+        "in this build.\n"
+        "/remote-sync mirrors sessions and memory to an object store; "
+        "it does not control deployed agents. Use [bold]/help[/bold] for supported commands."
+    )
+    session.mark_latest(ok=False, kind="slash")
+    return True
+
+
 def _cmd_logout(session: Session, console: Console, args: list[str]) -> bool:  # noqa: ARG001
     """Sign out of the OpenSRE account. Same close-the-shell path as ``/account logout``."""
     return _cmd_account(session, console, ["logout"])
-
-
-def _cmd_remote(session: Session, console: Console, args: list[str]) -> bool:  # noqa: ARG001
-    # Remote-sync configuration prompts on the real TTY (click.prompt).
-    return run_cli_command(console, ["remote", *args], capture_output=False, session=session)
 
 
 def _cmd_guardrails(session: Session, console: Console, args: list[str]) -> bool:
@@ -505,7 +529,7 @@ def _cmd_skills(session: Session, console: Console, args: list[str]) -> bool:
 
 
 def _cmd_messaging(session: Session, console: Console, args: list[str]) -> bool:
-    return run_cli_command(console, ["messaging", *args], session=session)
+    return messaging_cmds.cmd_messaging(session, console, args, run_cli=run_cli_command)
 
 
 def _cmd_cron(session: Session, console: Console, args: list[str]) -> bool:
@@ -520,11 +544,30 @@ def _cmd_posthog(session: Session, console: Console, args: list[str]) -> bool:
     return run_cli_command(console, ["posthog", *args], capture_output=True, session=session)
 
 
+def _cmd_triage(session: Session, console: Console, args: list[str]) -> bool:
+    if args and args[0] == "watch":
+        console.print(
+            "Run the foreground watch in a separate terminal: opensre triage watch --help. "
+            "Use /triage reports --state <file> here to read retained reports."
+        )
+        session.mark_latest(ok=True, kind="slash")
+        return True
+    return run_cli_command(console, ["triage", *args], capture_output=True, session=session)
+
+
 def _cmd_debug(session: Session, console: Console, args: list[str]) -> bool:
     return run_cli_command(console, ["debug", *args], session=session)
 
 
 COMMANDS: list[SlashCommand] = [
+    SlashCommand(
+        "/triage",
+        "Read retained OTel incident reports.",
+        _cmd_triage,
+        usage=("/triage reports --state <file>",),
+        first_arg_completions=(("reports", "Read retained incident reports"),),
+        mutating=False,
+    ),
     SlashCommand(
         "/account",
         "Sign in to OpenSRE and inspect the local account.",
@@ -556,13 +599,19 @@ COMMANDS: list[SlashCommand] = [
         "Log in to LLM providers and inspect local auth state.",
         _cmd_auth,
         first_arg_completions=CLI_COMMAND_CHOICES[("/auth",)],
-        usage=("/auth", "/auth status", "/auth login deepseek", "/auth logout deepseek"),
+        usage=(
+            "/auth",
+            "/auth status",
+            "/auth login chatgpt",
+            "/auth login deepseek",
+            "/auth logout deepseek",
+        ),
     ),
     SlashCommand(
         "/login",
         "Shortcut for LLM provider login.",
         _cmd_login,
-        usage=("/login", "/login chatgpt", "/login claude", "/login deepseek"),
+        usage=("/login", "/login chatgpt", "/login anthropic", "/login deepseek"),
     ),
     SlashCommand(
         "/logout",
@@ -586,14 +635,9 @@ COMMANDS: list[SlashCommand] = [
     ),
     SlashCommand(
         "/remote",
-        "Connect to and trigger a remote deployed agent.",
+        "Remote-agent operations are unavailable in this build.",
         _cmd_remote,
-        usage=(
-            "/remote health",
-            "/remote ops",
-            "/remote pull",
-            "/remote trigger",
-        ),
+        usage=("/remote",),
     ),
     SlashCommand(
         "/guardrails",
@@ -654,11 +698,12 @@ COMMANDS: list[SlashCommand] = [
         _cmd_messaging,
         first_arg_completions=CLI_COMMAND_CHOICES[("/messaging",)],
         usage=(
-            "/messaging pair",
-            "/messaging allow",
-            "/messaging revoke",
-            "/messaging status",
+            "/messaging status --platform <platform>",
+            "/messaging pair --platform <platform>",
+            "/messaging allow --platform <platform> --user-id <id>",
+            "/messaging revoke --platform <platform> --user-id <id>",
         ),
+        notes=("Omit required values in the terminal to choose them interactively.",),
     ),
     SlashCommand(
         "/cron",
@@ -669,9 +714,9 @@ COMMANDS: list[SlashCommand] = [
             "/cron",
             "/cron list",
             "/cron add --name <name>",
-            "/cron remove <id>",
-            "/cron run <id>",
-            "/cron logs <id>",
+            "/cron remove [id]",
+            "/cron run [id]",
+            "/cron logs [id]",
             "/cron status",
             "/cron start [--service]",
         ),

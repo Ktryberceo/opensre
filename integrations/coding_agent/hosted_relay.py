@@ -18,6 +18,7 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Mapping
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import TracebackType
@@ -41,12 +42,19 @@ class HostedRouteRelay:
     """One run's private door to the hosted LLM route.
 
     ``base_url`` and ``run_token`` are what the agent gets; the upstream token
-    stays in this process.
+    stays in this process. ``upstream_headers`` are added to every forwarded
+    call (the member the run is spent for); the agent cannot set them.
     """
 
-    def __init__(self, upstream_base_url: str, upstream_token: str) -> None:
+    def __init__(
+        self,
+        upstream_base_url: str,
+        upstream_token: str,
+        upstream_headers: Mapping[str, str] | None = None,
+    ) -> None:
         self._upstream_base_url = upstream_base_url.rstrip("/")
         self._upstream_token = upstream_token
+        self._upstream_headers = dict(upstream_headers or {})
         self.run_token = secrets.token_urlsafe(32)
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -62,6 +70,7 @@ class HostedRouteRelay:
         relay = self
         upstream = self._upstream_base_url
         upstream_token = self._upstream_token
+        upstream_headers = self._upstream_headers
         run_token = self.run_token
 
         class _Handler(BaseHTTPRequestHandler):
@@ -102,6 +111,8 @@ class HostedRouteRelay:
                     value = self.headers.get(name)
                     if value:
                         request.add_header(name, value)
+                for name, value in upstream_headers.items():
+                    request.add_header(name, value)
                 request.add_header("authorization", f"Bearer {upstream_token}")
                 try:
                     response = urllib.request.urlopen(  # noqa: S310 (https route from the account)

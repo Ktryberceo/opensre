@@ -16,12 +16,15 @@ import pytest
 from prompt_toolkit.application import create_app_session
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import CompleteEvent
+from prompt_toolkit.data_structures import Size
 from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory, InMemoryHistory
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.input.defaults import create_pipe_input
 from prompt_toolkit.keys import Keys
 from prompt_toolkit.output import DummyOutput
+from prompt_toolkit.output.color_depth import ColorDepth
+from prompt_toolkit.output.vt100 import Vt100_Output
 
 from infrastructure.terminal import theme as ui_theme
 from infrastructure.terminal.theme import (
@@ -194,6 +197,51 @@ def test_full_screen_transcript_takes_the_wheel_through_mouse_reporting() -> Non
         prompt = input_prompt.build_prompt_session(transcript=TranscriptControl(TranscriptStore()))
 
     assert prompt.app.renderer.mouse_support() is True
+
+
+def test_full_screen_frame_keeps_the_terminal_background() -> None:
+    """Entering the full-screen view must not repaint the user's terminal.
+
+    Regression: painting the root with the theme ``BG`` turned the whole screen
+    a light grey on terminals whose palette renders that colour lighter than
+    their own background, the moment the shell switched to the transcript view.
+    Only the composer plate and menu selection may carry a background.
+    """
+    set_active_theme("blue")
+    buffer = io.StringIO()
+    output = Vt100_Output(
+        buffer,
+        lambda: Size(rows=20, columns=60),
+        term="xterm-256color",
+        default_color_depth=ColorDepth.DEPTH_24_BIT,
+    )
+    with create_app_session(input=DummyInput(), output=output):
+        prompt = input_prompt.build_prompt_session(transcript=TranscriptControl(TranscriptStore()))
+        app = prompt.app
+
+        async def _render_frame() -> None:
+            app.renderer.render(app, app.layout)
+
+        asyncio.run(_render_frame())
+
+    painted = set(re.findall(r"48;2;(\d+;\d+;\d+)", buffer.getvalue()))
+    assert painted, "expected the composer plate to carry a background"
+    assert painted <= {
+        _rgb(THEME_REGISTRY["blue"].INPUT_SURFACE),
+        _rgb(ui_theme.menu_selection_hex()),
+    }
+
+
+def test_full_screen_terminal_background_honors_no_color(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The full-screen surface must not introduce colour when it is disabled."""
+    monkeypatch.setenv("NO_COLOR", "1")
+
+    with create_app_session(input=DummyInput(), output=DummyOutput()):
+        prompt = input_prompt.build_prompt_session(transcript=TranscriptControl(TranscriptStore()))
+
+    assert prompt.app.color_depth is ColorDepth.DEPTH_1_BIT
 
 
 def test_a_bare_composer_leaves_mouse_reporting_off() -> None:

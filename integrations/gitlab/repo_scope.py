@@ -211,7 +211,9 @@ class _GitlabVcsRepoScopeProvider:
         env: Mapping[str, str] | None,
         cwd: str | Path | None,
         cached: tuple[str, ...] | None,
+        resolved: Mapping[str, Any] | None = None,
     ) -> tuple[str, ...] | None:
+        _ = resolved
         cached_scope = GitlabRepoScope(*cached) if cached else None
         scope = infer_gitlab_repo_scope(
             message=message,
@@ -236,9 +238,11 @@ class _GitlabVcsRepoScopeProvider:
         self,
         *,
         text: str,
+        role: str,
         env: Mapping[str, str] | None,
     ) -> tuple[tuple[str, ...], ...]:
-        """Return all GitLab repositories explicitly named in ``text``."""
+        """Return all GitLab repositories named in ``text``: URLs and ``gitlab:`` only, any role."""
+        _ = role
         env_map = env if env is not None else os.environ
         return tuple(
             tuple(scope)
@@ -247,6 +251,9 @@ class _GitlabVcsRepoScopeProvider:
                 allowed_hosts=_configured_hosts(env_map),
             )
         )
+
+    def prewarm(self, resolved: Mapping[str, Any]) -> None:
+        """GitLab scope inference reads nothing remote."""
 
 
 GITLAB_VCS_REPO_SCOPE_PROVIDER = _GitlabVcsRepoScopeProvider()

@@ -121,6 +121,28 @@ def test_creation_shows_loading_on_the_thread_and_posts_nothing() -> None:
     assert client.statuses[0]["status"] == "is working on your request..."
 
 
+def test_finalize_drops_a_trailing_plan_checklist() -> None:
+    """The settled plan is a terminal overlay and must not ride on the Slack reply."""
+    client = _FakeMessagingClient()
+    sink = _sink(client)
+    statuses_before_plan = len(client.statuses)
+
+    sink.print("Plan complete · 2/2\n  ✓ Check disk\n      ↳ shell_run\n  ✓ Report")
+    sink.finalize(
+        "The disk is full.\n\nPlan complete · 2/2\n  ✓ Check disk\n      ↳ shell_run\n  ✓ Report"
+    )
+
+    # The checklist is not a loading line. Finalize only clears the indicator.
+    assert len(client.statuses) == statuses_before_plan + 1
+    assert client.statuses[-1]["status"] == ""
+    assert all("Plan" not in str(status.get("loading_messages")) for status in client.statuses)
+    posted = client.posts[-1]
+    assert posted["text"] == "The disk is full."
+    assert posted["blocks"][0]["text"] == "The disk is full."
+    assert "Plan complete" not in posted["text"]
+    assert "Check disk" not in posted["blocks"][0]["text"]
+
+
 def test_finalize_posts_the_answer_once() -> None:
     client = _FakeMessagingClient()
     sink = _sink(client)

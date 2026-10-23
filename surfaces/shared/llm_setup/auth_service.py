@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
 from pathlib import Path
 
 from config.llm_auth.credentials import (
@@ -29,34 +28,11 @@ from surfaces.shared.llm_setup.auth_profiles import (
     provider_for_profile,
     resolve_auth_profile,
 )
+from surfaces.shared.llm_setup.auth_results import AuthSetupResult, AuthStatus
 from surfaces.shared.llm_setup.catalog import WizardCredentialKind
 from surfaces.shared.llm_setup.env_sync import sync_provider_env
 from surfaces.shared.llm_setup.persist import AuthSetupError, persist_api_key_secret
 from surfaces.shared.llm_setup.validation import validate_provider_credentials
-
-
-@dataclass(frozen=True)
-class AuthStatus:
-    """Status row for one provider auth path."""
-
-    provider: str
-    label: str
-    authenticated: bool
-    source: str
-    detail: str
-    verified: bool = False
-    stale: bool = False
-
-
-@dataclass(frozen=True)
-class AuthSetupResult:
-    """Result from configuring a provider auth path."""
-
-    provider: str
-    model: str
-    source: str
-    detail: str
-    env_path: Path | None
 
 
 def _save_auth_record(
@@ -85,16 +61,6 @@ def configure_api_key_provider(
     env_path: Path | None = None,
 ) -> AuthSetupResult:
     """Validate and persist an API-key provider credential."""
-    from config.account import account_llm_route
-
-    account_route = account_llm_route()
-    if account_route is not None:
-        raise AuthSetupError(
-            "LLM provider authentication is managed by your OpenSRE account: "
-            f"openai ({account_route.model}, hosted by OpenSRE). "
-            "Sign out with `/logout` or `opensre account logout` before configuring another provider."
-        )
-
     provider = provider_for_profile(profile)
     if provider.credential_kind != WizardCredentialKind.API_KEY or not provider.api_key_env:
         raise AuthSetupError(f"{provider.label} does not use an OpenSRE-managed API key.")
@@ -172,6 +138,10 @@ def verify_provider(raw_name: str) -> AuthStatus:
     """Intentionally resolve request-time credentials and refresh metadata."""
     profile = resolve_auth_profile(raw_name)
     provider = provider_for_profile(profile)
+    if profile.kind == "subscription":
+        from surfaces.shared.llm_setup.subscription_service import verify_subscription
+
+        return verify_subscription(profile)
     resolved = verify_provider_auth(provider.value)
     return AuthStatus(
         provider.value,
@@ -190,6 +160,10 @@ def logout_provider(raw_name: str) -> str:
 
     profile = resolve_auth_profile(raw_name)
     provider = provider_for_profile(profile)
+    if profile.kind == "subscription":
+        from surfaces.shared.llm_setup.subscription_service import logout_subscription
+
+        return logout_subscription()
     delete_provider_auth_record(provider.value)
     try:
         delete_provider_auth(provider.value)
@@ -203,8 +177,6 @@ def logout_provider(raw_name: str) -> str:
 
 __all__ = [
     "AuthSetupError",
-    "AuthSetupResult",
-    "AuthStatus",
     "configure_api_key_provider",
     "logout_provider",
     "persist_api_key_secret",

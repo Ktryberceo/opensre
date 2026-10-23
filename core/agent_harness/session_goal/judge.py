@@ -221,13 +221,6 @@ class _AgentAsPromptClient:
         )
 
 
-def default_classification_llm() -> Any:
-    """Cheap classification-tier client for the transcript judge."""
-    from core.llm.factory import LLMRole, get_llm
-
-    return get_llm(LLMRole.CLASSIFICATION)
-
-
 def _unfinished_block(unfinished: tuple[tuple[int, str], ...]) -> str:
     if not unfinished:
         return "Unfinished checklist items: none."

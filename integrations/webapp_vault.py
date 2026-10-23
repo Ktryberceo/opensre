@@ -18,8 +18,13 @@ edits back up.
 from __future__ import annotations
 
 import functools
+import hashlib
+import json
 import logging
 import os
+import threading
+import time
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from typing import Any
 
@@ -32,6 +37,7 @@ from config.constants.account import (
     INTEGRATION_OWNER_ID_TAG,
     INTEGRATION_OWNER_KIND_TAG,
     INTEGRATION_RETRIEVAL_ORIGIN_FIELD,
+    OPENSRE_WEBAPP_VAULT_TTL_SECONDS,
 )
 from config.constants.billing import (
     CREDITS_HTTP_TIMEOUT_SECONDS,
@@ -228,13 +234,14 @@ def fetch_webapp_org_integrations() -> list[dict[str, Any]] | None:
 
 
 def records_from_vault_payload(
-    payload: object, *, organization_id: str
+    payload: object, *, organization_id: str, viewer_user_id: str | None = None
 ) -> list[dict[str, Any]] | None:
     """Parse a vault JSON body into integration records.
 
     ``None`` means the body is not a successful vault response. Connections
     owned by anyone other than ``organization_id`` (a member's personal grant)
-    are dropped: this store is shared by every member the silo serves.
+    are dropped: this store is shared by every member the silo serves. A
+    one-turn view for the member ``viewer_user_id`` keeps that member's own.
     """
     if not isinstance(payload, dict) or not payload.get("success"):
         return None
@@ -254,7 +261,7 @@ def records_from_vault_payload(
         if owner_tags is None:
             continue
         tags = _instance_tags(item, credentials, owner_tags=owner_tags)
-        if not connection_visible(tags, user_id=None, organization_id=organization_id):
+        if not connection_visible(tags, user_id=viewer_user_id, organization_id=organization_id):
             continue
         normalized_credentials = {
             str(key): str(value) for key, value in credentials.items() if value is not None
@@ -320,3 +327,122 @@ def _owner_tags(item: dict[str, Any]) -> dict[str, object] | None:
         INTEGRATION_OWNER_KIND_TAG: kind,
         INTEGRATION_OWNER_ID_TAG: owner_id,
     }
+
+
+# ---------------------------------------------------------------------------
+# Live snapshot for turn resolution
+# ---------------------------------------------------------------------------
+#
+# fetch_webapp_org_integrations() reads the webapp on every call. Turn
+# resolution reads it through load_webapp_org_integrations() instead: one
+# snapshot per OPENSRE_WEBAPP_VAULT_TTL_SECONDS, and a generation that moves
+# only when the fetched set changes, so a session drops its resolved
+# integrations on the next turn after a connection is added or removed in the
+# app, with no gateway restart.
+
+
+@dataclass
+class _Snapshot:
+    records: list[dict[str, Any]] | None = None
+    fingerprint: str = ""
+    generation: int = 0
+    fetched_at: float = 0.0
+    populated: bool = False
+    #: Refreshes started / the newest one whose result was kept. A slower,
+    #: older refresh finishing last must not overwrite a newer set.
+    started: int = 0
+    applied: int = 0
+    #: Services any successful refresh in this process listed.
+    seen_services: set[str] = field(default_factory=set)
+    lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+
+_snapshot = _Snapshot()
+
+#: GitHub keeps its own app-grant preservation rules; never tombstone it.
+_NEVER_WITHDRAWN = frozenset({"github"})
+WITHDRAWN_STATUS = "withdrawn"
+
+
+def load_webapp_org_integrations() -> list[dict[str, Any]] | None:
+    """The workspace's vault records, refreshed at most once per TTL.
+
+    ``None`` keeps :func:`fetch_webapp_org_integrations`'s meaning. A failed
+    refresh keeps the last good set, so an outage never empties a running
+    gateway.
+    """
+    now = time.monotonic()
+    with _snapshot.lock:
+        if _snapshot.populated and now - _snapshot.fetched_at < OPENSRE_WEBAPP_VAULT_TTL_SECONDS:
+            return _copy_records(_snapshot.records)
+        _snapshot.started += 1
+        sequence = _snapshot.started
+    fetched = fetch_webapp_org_integrations()
+    with _snapshot.lock:
+        if sequence < _snapshot.applied:
+            return _copy_records(_snapshot.records)
+        _snapshot.fetched_at = now
+        if fetched is None and _snapshot.populated:
+            return _copy_records(_snapshot.records)
+        _snapshot.applied = sequence
+        _snapshot.populated = True
+        if fetched is not None:
+            _snapshot.seen_services.update(_services(fetched))
+        fingerprint = hashlib.sha256(
+            json.dumps(fetched, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        if fingerprint != _snapshot.fingerprint:
+            _snapshot.records = fetched
+            _snapshot.fingerprint = fingerprint
+            _snapshot.generation += 1
+        return _copy_records(_snapshot.records)
+
+
+def withdrawn_webapp_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Inactive placeholders for services the app removed since an earlier refresh.
+
+    Merging by service lets a later group replace a service, so a placeholder
+    hides the store's boot-time copy of a disconnected service right away
+    instead of after the secret watcher re-hydrates. Only services an earlier
+    refresh listed are withdrawn: the store's own services (the gateway's
+    Slack install, local edits) are never touched.
+    """
+    with _snapshot.lock:
+        seen = set(_snapshot.seen_services)
+    withdrawn = seen - _services(records) - _NEVER_WITHDRAWN
+    return [
+        {
+            INTEGRATION_RETRIEVAL_ORIGIN_FIELD: INTEGRATION_APP_ORIGIN,
+            "id": f"withdrawn:{service}",
+            "service": service,
+            "status": WITHDRAWN_STATUS,
+            "credentials": {},
+            "instances": [],
+        }
+        for service in sorted(withdrawn)
+    ]
+
+
+def webapp_vault_generation() -> int:
+    """Changes when the webapp's workspace set changes; refreshes a stale snapshot."""
+    load_webapp_org_integrations()
+    with _snapshot.lock:
+        return _snapshot.generation
+
+
+def reset_webapp_vault_cache() -> None:
+    """Forget the snapshot (deterministic reset hook for tests)."""
+    global _snapshot
+    _snapshot = _Snapshot()
+
+
+def _services(records: list[dict[str, Any]]) -> set[str]:
+    return {
+        service
+        for record in records
+        if (service := str(record.get("service") or "").strip().lower())
+    }
+
+
+def _copy_records(records: list[dict[str, Any]] | None) -> list[dict[str, Any]] | None:
+    return None if records is None else [dict(record) for record in records]

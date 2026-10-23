@@ -16,6 +16,8 @@ $ErrorActionPreference = "Stop"
 $script:OpenSreProgressStep = 0
 $script:OpenSreChannelExplicit = $PSBoundParameters.ContainsKey("Channel") -or [bool]$env:OPENSRE_INSTALL_CHANNEL
 $script:OpenSreInstallOrigin = if ($lp) { "landing_page" } elseif ($gh) { "github" } elseif ($dc) { "documentation" } else { "" }
+$script:OpenSreGitHubMetadataToken = [string]$env:OPENSRE_INSTALL_GITHUB_TOKEN
+Remove-Item Env:OPENSRE_INSTALL_GITHUB_TOKEN -ErrorAction SilentlyContinue
 
 function Test-OpenSreVerboseInstall {
     $value = [string]$env:OPENSRE_INSTALL_VERBOSE
@@ -543,6 +545,10 @@ function Invoke-OpenSreRestMethod {
         Headers = Get-OpenSreRequestHeaders
     }
 
+    if ($script:OpenSreGitHubMetadataToken -and $Uri.StartsWith("https://api.github.com/", [System.StringComparison]::OrdinalIgnoreCase)) {
+        $params.Headers["Authorization"] = "Bearer $script:OpenSreGitHubMetadataToken"
+    }
+
     $command = Get-Command Invoke-RestMethod -ErrorAction Stop
     if ($command.Parameters.ContainsKey("UseBasicParsing")) {
         $params.UseBasicParsing = $true
@@ -1008,7 +1014,7 @@ function Ensure-OpenSreGithubCli {
             }
         }
         catch {
-            # Soft dependency — fall through to the manual hint.
+            # Soft dependency - fall through to the manual hint.
         }
     }
 
@@ -1312,7 +1318,7 @@ function Install-OpenSre {
     Ensure-OpenSreGithubCli
 
     $exe = Get-OpenSreCommandName -BinaryName $binaryName
-    $sep = "────────────────────────────────────────────"
+    $sep = ([string][char]0x2500) * 44
 
     Write-Host ""
     Write-Host $sep
@@ -1336,7 +1342,7 @@ function Install-OpenSre {
     Write-Host "  2. Run  $exe  (no subcommand)"
     Write-Host "     This starts the account gate first, then opens the interactive shell."
     Write-Host ""
-    Write-Host "  3. Optional — one-shot RCA from a file:"
+    Write-Host "  3. Optional - one-shot RCA from a file:"
     Write-Host "     $exe investigate -i path/to/alert.json"
     Write-Host ""
     Write-Host "Docs: https://www.opensre.com/docs"

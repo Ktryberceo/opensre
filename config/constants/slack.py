@@ -21,6 +21,10 @@ SLACK_SILO_TEAM_IDS_ENV = "OPENSRE_SILO_TEAM_IDS"
 # ``xoxe.xoxp-``, which is why this is a tuple and not a single prefix.
 SLACK_USER_TOKEN_PREFIXES: tuple[str, ...] = ("xoxp-", "xoxe.xoxp-")
 
+# Callback ID of the "Stop OpenSRE" message shortcut on the Slack app
+# (Interactivity & Shortcuts). The app config must use this exact value.
+SLACK_STOP_SHORTCUT_CALLBACK_ID = "stop_opensre"
+
 # Socket Mode liveness ticker join during worker stop. Keep this small so
 # in-flight Slack turns keep the rest of the SIGTERM budget.
 SLACK_HEARTBEAT_STOP_TIMEOUT_SECONDS = 2.0
@@ -60,6 +64,7 @@ __all__ = [
     "SLACK_SOCKET_MODE_DEDUP_MAX_EVENTS",
     "SLACK_SOCKET_MODE_DEDUP_RETRY_WINDOW_SECONDS",
     "SLACK_SOCKET_MODE_DEDUP_TTL_SECONDS",
+    "SLACK_STOP_SHORTCUT_CALLBACK_ID",
     "SLACK_USER_TOKEN_PREFIXES",
     "SLACK_WEBHOOK_URL_ENV",
 ]

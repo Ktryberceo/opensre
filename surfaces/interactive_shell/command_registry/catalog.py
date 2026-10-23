@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from itertools import chain
 
-from surfaces.interactive_shell.command_registry.agents import COMMANDS as AGENTS_COMMANDS
 from surfaces.interactive_shell.command_registry.alerts import COMMANDS as ALERTS_COMMANDS
 from surfaces.interactive_shell.command_registry.choice_prompt import (
     COMMANDS as CHOICE_COMMANDS,
@@ -22,6 +21,9 @@ from surfaces.interactive_shell.command_registry.gateway_cmds import (
 from surfaces.interactive_shell.command_registry.help import COMMANDS as HELP_COMMANDS
 from surfaces.interactive_shell.command_registry.integrations import (
     COMMANDS as INTEGRATIONS_COMMANDS,
+)
+from surfaces.interactive_shell.command_registry.knowledge_cmds import (
+    COMMANDS as KNOWLEDGE_COMMANDS,
 )
 from surfaces.interactive_shell.command_registry.loops_cmds import COMMANDS as LOOPS_COMMANDS
 from surfaces.interactive_shell.command_registry.memory_cmds import (
@@ -64,9 +66,9 @@ _MERGED_SEQUENCE = tuple(
         GATEWAY_COMMANDS,
         PRIVACY_COMMANDS,
         MEMORY_COMMANDS,
+        KNOWLEDGE_COMMANDS,
         WORK_COMMANDS,
         REMOTE_SYNC_COMMANDS,
-        AGENTS_COMMANDS,
         ALERTS_COMMANDS,
         PARITY_COMMANDS,
         SYSTEM_COMMANDS,

@@ -7,6 +7,21 @@ from config.package_exports import bind_package_exports
 # Re-exported name -> leaf module. Importing this package must not load
 # those modules; ``__getattr__`` loads one leaf the first time a name is used.
 EXPORTS: dict[str, str] = {
+    "CHATGPT_ISSUER": "chatgpt",
+    "CHATGPT_AUTHORIZE_URL": "chatgpt",
+    "CHATGPT_TOKEN_URL": "chatgpt",
+    "CHATGPT_DISCOVERY_URL": "chatgpt",
+    "CHATGPT_RESOURCE": "chatgpt",
+    "CHATGPT_DYNAMIC_CLIENT": "chatgpt",
+    "CHATGPT_SCOPES": "chatgpt",
+    "CHATGPT_CALLBACK_PATH": "chatgpt",
+    "TELEMETRY_CLICKHOUSE_PASSWORD_ENV": "telemetry",
+    "TELEMETRY_MODEL_TIMEOUT_SECONDS": "telemetry",
+    "TELEMETRY_REPORT_MAX_CHARS": "telemetry",
+    "TELEMETRY_EVIDENCE_MAX_CHARS": "telemetry",
+    "TELEMETRY_CLICKHOUSE_TIMEOUT_SECONDS": "telemetry",
+    "TELEMETRY_QUERY_MAX_RESPONSE_BYTES": "telemetry",
+    "TELEMETRY_QUERY_MAX_RESULT_ROWS": "telemetry",
     "CLI_HANDOFF_FLAG": "cli_handoff",
     "ANALYTICS_CICD_ENV": "analytics",
     "CONNECT_INTEGRATIONS_HEADING": "skill_prerequisites",
@@ -327,12 +342,16 @@ EXPORTS: dict[str, str] = {
     "KUBECONFIG_NAMESPACE_ENV": "kubernetes",
     "KUBECONFIG_PATH_ENV": "kubernetes",
     # llm
+    "ANTHROPIC_DEFER_LOADING_KEY": "llm",
+    "ANTHROPIC_THINKING_BINDING_KEY": "llm",
     "AZURE_OPENAI_API_KEY_ENV": "llm",
     "OPENAI_API_KEY_ENV": "llm",
     "OPENAI_BASE_URL_ENV": "llm",
     "AZURE_OPENAI_API_VERSION_ENV": "llm",
     "AZURE_OPENAI_BASE_URL_ENV": "llm",
     "LLM_AUTH_METHOD_ENV": "llm",
+    "OPENSRE_LLM_CONNECTION_ENV": "llm",
+    "OPENSRE_SUBSCRIPTION_AUTH_DIR_ENV": "llm",
     "LLM_PROVIDER_ENV": "llm",
     "OPENSRE_LLM_NATIVE_STRUCTURED_OUTPUT_ENV": "llm",
     "OPENSRE_REACT_GOAL_LLM_REVIEW_ENV": "llm",
@@ -362,6 +381,14 @@ EXPORTS: dict[str, str] = {
     "TOOL_OUTPUT_HISTORY_DENOMINATOR": "tool_output",
     "TOOL_OUTPUT_HISTORY_NUMERATOR": "tool_output",
     "TOOL_OUTPUT_PERSIST_MAX_BYTES": "tool_output",
+    # knowledge
+    "KNOWLEDGE_DIRNAME": "knowledge",
+    "KNOWLEDGE_READERS_REFRESH_SECONDS": "knowledge",
+    "KNOWLEDGE_SCAN_CHECK_INTERVAL_SECONDS": "knowledge",
+    "KNOWLEDGE_SCAN_MAX_AGE_SECONDS": "knowledge",
+    "OPENSRE_KNOWLEDGE_DIR_ENV": "knowledge",
+    "OPENSRE_KNOWLEDGE_DISABLED_ENV": "knowledge",
+    "OPENSRE_KNOWLEDGE_SCAN_MESSAGES_ENV": "knowledge",
     # memory
     "MEMORY_TOOL_NAMES": "memory",
     "OPENSRE_MEMORY_AUTOEXTRACT_DISABLED_ENV": "memory",
@@ -423,6 +450,7 @@ EXPORTS: dict[str, str] = {
     "UnsafePathSegmentError": "paths",
     "ci_fix_ledger_path": "paths",
     "ensure_opensre_tmp_dir": "paths",
+    "get_knowledge_dir": "paths",
     "get_memory_dir": "paths",
     "get_sessions_dir": "paths",
     "get_store_path": "paths",
@@ -512,12 +540,15 @@ EXPORTS: dict[str, str] = {
     # runbooks
     "RUNBOOK_CONTENT_MAX_CHARS": "runbooks",
     "RUNBOOK_MANIFEST_MAX_CHARS": "runbooks",
+    # runtime_events
+    "PARTIAL_MESSAGE_KEY": "runtime_events",
     # scheduler
     "WEEKDAY_CRON_FIELD": "scheduler",
     "NON_RETRYABLE_WORK_ERROR_KINDS": "scheduler",
     "OPENSRE_GATEWAY_HOST_SCHEDULER_ENV": "scheduler",
     "OPENSRE_SCHEDULER_BUILD_ENV": "scheduler",
     "SCHEDULER_MISSED_FIRE_GRACE_SECONDS": "scheduler",
+    "SCHEDULER_SCHEDULE_CHANGED_AT_PARAM": "scheduler",
     "STATELESS_LOOP_IDLE_REPLY": "scheduler",
     "SCHEDULED_TASK_TRACE_KEY": "scheduler",
     # secrets
@@ -599,7 +630,7 @@ EXPORTS: dict[str, str] = {
     # tooling
     "CI_ANALYSIS_PREFETCH_MAX_AGE_SECONDS": "tooling",
     "DEFAULT_APPROVAL_EXPIRY_SECONDS": "tooling",
-    "MAX_PARALLEL_TOOL_CALLS": "tooling",
+    "MAX_CONCURRENT_TOOL_CALLS": "tooling",
     "OPENSRE_PARALLEL_TOOL_CALLS_ENV": "tooling",
     "TOOL_PREFETCH_MAX_ENTRIES": "tooling",
     "WORKSPACE_SCAN_PREFETCH_MAX_AGE_SECONDS": "tooling",
@@ -613,6 +644,8 @@ EXPORTS: dict[str, str] = {
     "INITIAL_TOOL_SCHEMA_TOKEN_LIMIT": "tool_discovery",
     "MAX_STAGNANT_DISCOVERY_ITERATIONS": "tool_discovery",
     "MODEL_ONLY_PRESENTATION_KEY": "tool_discovery",
+    "REPLAY_WITH_HISTORY_KEY": "tool_discovery",
+    "REQUEST_SCOPED_RESULTS_METADATA_KEY": "tool_discovery",
     "SESSION_GOAL_CONTROL_TOOL_NAMES": "tool_discovery",
     "TOOL_DISCOVERY_STATE_DENIED": "tool_discovery",
     "TOOL_DISCOVERY_STATE_MATCHED": "tool_discovery",
@@ -622,6 +655,7 @@ EXPORTS: dict[str, str] = {
     "TOOL_DISCOVERY_STATE_TRANSPORT_FAILURE": "tool_discovery",
     "TOOL_FAILURE_STATE_KEY": "tool_discovery",
     "TOOL_FAILURE_STATES": "tool_discovery",
+    "TOOL_SEARCH_MATCHES_KEY": "tool_discovery",
     "TOOL_SEARCH_MAX_RESULTS": "tool_discovery",
     "TOOL_SEARCH_NAME": "tool_discovery",
     # tracer
@@ -664,24 +698,6 @@ EXPORTS: dict[str, str] = {
     # work_items
     "OPENSRE_WORK_ITEMS_DIR_ENV": "work_items",
     "WORK_ITEM_REMINDER_RUN_AT_PARAM": "work_items",
-    # x_mcp
-    "X_MCP_AUTH_TOKEN_ENV": "x_mcp",
-    "X_MCP_URL_ENV": "x_mcp",
-    # yandex_cloud
-    "AUTH_MODE_IAM_TOKEN": "yandex_cloud",
-    "AUTH_MODE_METADATA": "yandex_cloud",
-    "AUTH_MODE_OAUTH": "yandex_cloud",
-    "AUTH_MODE_SA_KEY": "yandex_cloud",
-    "AUTH_MODE_SA_KEY_FILE": "yandex_cloud",
-    "YC_API_ENDPOINT_ENV": "yandex_cloud",
-    "YC_CLOUD_ID_ENV": "yandex_cloud",
-    "YC_ENDPOINT_OVERRIDES_ENV": "yandex_cloud",
-    "YC_FOLDER_ID_ENV": "yandex_cloud",
-    "YC_IAM_TOKEN_ENV": "yandex_cloud",
-    "YC_SA_KEY_ENV": "yandex_cloud",
-    "YC_SA_KEY_FILE_ENV": "yandex_cloud",
-    "YC_TOKEN_ENV": "yandex_cloud",
-    "YC_USE_METADATA_ENV": "yandex_cloud",
 }
 
 __all__, __getattr__, __dir__ = bind_package_exports("config.constants", EXPORTS)

@@ -297,8 +297,6 @@ class InteractiveShellController:
                 on_goal_control=self._apply_goal_control_at_turn_boundary,
             )
         )
-        # Fleet sampler is lazy: /fleet triggers it on first live use.
-        self.session.terminal.fleet_sampler_starter = self.background.ensure_fleet_sampler_started
         try:
             start_loop_scheduler(host_session=lambda: self.session.session_id)
         except Exception as exc:  # noqa: BLE001
@@ -458,6 +456,9 @@ class InteractiveShellController:
                     self.session.terminal.pending_choice_response = None
                     # The user moved on, so a turn parked behind setup is not replayed.
                     clear_setup_resume(self.session)
+                    if not text.startswith("/"):
+                        # A typed request replies instead; /choose no longer reopens the menu.
+                        self.session.terminal.closed_choice = None
                     # Clear a finished plan left pinned after the previous turn so
                     # it does not linger over this one. An unfinished plan stays:
                     # the operator may continue it or type ``go`` while idle.

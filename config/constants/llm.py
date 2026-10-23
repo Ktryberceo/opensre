@@ -19,8 +19,12 @@ from typing import Final
 
 LLM_PROVIDER_ENV: Final[str] = "LLM_PROVIDER"
 
-#: Legacy key from the removed OAuth auth method. API keys are the only LLM
-#: auth path now; env sync strips this from existing ``.env`` files.
+# Explicit local model selection is independent of OpenSRE account identity.
+OPENSRE_LLM_CONNECTION_ENV: Final[str] = "OPENSRE_LLM_CONNECTION"
+OPENSRE_SUBSCRIPTION_AUTH_DIR_ENV: Final[str] = "OPENSRE_SUBSCRIPTION_AUTH_DIR"
+
+#: Retired auth-method selector; subscription connections now have separate
+#: provider identities. Env sync strips this from existing ``.env`` files.
 LLM_AUTH_METHOD_ENV: Final[str] = "LLM_AUTH_METHOD"
 
 AZURE_OPENAI_BASE_URL_ENV: Final[str] = "AZURE_OPENAI_BASE_URL"
@@ -44,6 +48,14 @@ OPENSRE_REACT_GOAL_LLM_REVIEW_ENV: Final[str] = "OPENSRE_REACT_GOAL_LLM_REVIEW"
 #: overflow to cold cache machines. OpenAI and the hosted proxy cap it at 128.
 OPENAI_PROMPT_CACHE_KEY_PREFIX: Final[str] = "opensre-sys-"
 OPENAI_PROMPT_CACHE_KEY_HASH_CHARS: Final[int] = 32
+
+#: Anthropic tool-schema field that keeps a tool out of the prompt until a tool
+#: reference loads it. Such a tool sits outside the cached prefix and cannot
+#: carry a cache marker: the API rejects the request.
+ANTHROPIC_DEFER_LOADING_KEY: Final[str] = "defer_loading"
+#: Internal marker on an assistant message: the conversation its thinking blocks
+#: are bound to, as ``{"prefix": <digest>, "after": <block id or "">}``.
+ANTHROPIC_THINKING_BINDING_KEY: Final[str] = "_opensre_thinking_binding"
 
 
 def react_goal_llm_review_enabled() -> bool:

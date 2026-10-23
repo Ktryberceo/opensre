@@ -18,7 +18,10 @@ from core.domain.work_items import (
     prioritize_work_items,
     work_items_path,
 )
-from surfaces.interactive_shell.command_registry.input_collection import can_collect_input
+from surfaces.interactive_shell.command_registry.input_collection import (
+    can_browse_records,
+    can_collect_input,
+)
 from surfaces.interactive_shell.command_registry.target_collection import collect_work_target
 from surfaces.interactive_shell.command_registry.types import SlashCommand
 from surfaces.interactive_shell.runtime import Session
@@ -28,7 +31,9 @@ from surfaces.interactive_shell.ui import (
     HIGHLIGHT,
 )
 from surfaces.interactive_shell.ui.work_input import build_work_form
+from surfaces.interactive_shell.ui.work_list import work_list_panel
 from surfaces.shared.terminal.components.command_input import run_command_input
+from surfaces.shared.terminal.components.record_browser import print_record_list
 from surfaces.shared.terminal.components.rendering import print_repl_renderable
 from surfaces.shared.terminal.tables.work_items import next_work_table, work_items_table
 
@@ -49,6 +54,11 @@ def _unsupported_reminder_error(args: Sequence[str]) -> str | None:
 
 
 def _validate_work_args(args: list[str]) -> str | None:
+    if args and args[0].lower() == "edit":
+        from surfaces.interactive_shell.command_registry.work_edit import parse_work_edit_args
+
+        _, _, edit_error = parse_work_edit_args(args[1:])
+        return edit_error or None
     if args and args[0].lower() == "add":
         reminder_error = _unsupported_reminder_error(args[1:])
         if reminder_error is not None:
@@ -79,7 +89,12 @@ def _split_options(args: list[str]) -> tuple[list[str], dict[str, str], str | No
     return remaining, options, None
 
 
-def _render_work_table(console: Console, rows: Sequence[WorkItem], *, title: str) -> bool:
+def _render_work_table(
+    console: Console, rows: Sequence[WorkItem], *, title: str, interactive: bool = False
+) -> bool:
+    if interactive:
+        print_repl_renderable(console, work_list_panel(rows, title=title))
+        return True
     if not rows:
         console.print(
             f"[{DIM}]no matching work items. Add one with[/] [{HIGHLIGHT}]/work add <title>[/][{DIM}].[/]"
@@ -90,7 +105,7 @@ def _render_work_table(console: Console, rows: Sequence[WorkItem], *, title: str
     return True
 
 
-def _show_list(console: Console, args: list[str]) -> bool:
+def _show_list(session: Session, console: Console, args: list[str]) -> bool:
     ensure_work_items_store()
     status = args[0].lower() if args and args[0].lower() in _STATUSES else "open"
     project_args = args[1:] if args and args[0].lower() in _STATUSES else args
@@ -99,7 +114,11 @@ def _show_list(console: Console, args: list[str]) -> bool:
         rows = [item for item in list_work_items(status=None, project=project) if item.is_active]
     else:
         rows = list_work_items(status=None if status == "all" else status, project=project)
-    return _render_work_table(console, rows, title="Work items")
+    interactive = can_browse_records(session, console)
+    if rows and interactive:
+        print_record_list(console, work_items_table(rows), title="/work list", browse=True)
+        return True
+    return _render_work_table(console, rows, title="Work items", interactive=interactive)
 
 
 def _add(console: Console, args: list[str]) -> bool:
@@ -158,14 +177,19 @@ def _done(console: Console, args: list[str]) -> bool:
     return True
 
 
-def _next(console: Console, args: list[str]) -> bool:
+def _next(session: Session, console: Console, args: list[str]) -> bool:
     project = " ".join(args).strip()
     items = [item for item in list_work_items(status=None, project=project) if item.is_active]
     ranked = prioritize_work_items(items, limit=5)
     if not ranked:
         console.print(f"[{DIM}]no open work items found.[/]")
         return True
-    print_repl_renderable(console, next_work_table(ranked))
+    print_record_list(
+        console,
+        next_work_table(ranked),
+        title="/work next",
+        browse=can_browse_records(session, console),
+    )
     return True
 
 
@@ -177,10 +201,10 @@ def _path(console: Console) -> bool:
 
 def _cmd_work(session: Session, console: Console, args: list[str]) -> bool:
     if not args:
-        return _show_list(console, [])
+        return _show_list(session, console, [])
     sub = args[0].lower()
     if sub in {"list", "ls"}:
-        return _show_list(console, args[1:])
+        return _show_list(session, console, args[1:])
     if sub == "add":
         if can_collect_input(session, WORK_ADD_INPUT, args):
             _, options, _ = _split_options(args[1:])
@@ -190,20 +214,25 @@ def _cmd_work(session: Session, console: Console, args: list[str]) -> bool:
                 return True
             return _create_work(console, values["title"], values)
         return _add(console, args[1:])
+    if sub == "edit":
+        from surfaces.interactive_shell.command_registry.work_edit import edit_work
+
+        return edit_work(session, console, args[1:])
     if sub in {"done", "complete"}:
         collected = collect_work_target(session, console, sub, args[1:])
         return True if collected is None else _done(console, collected)
     if sub in {"next", "prioritize"}:
-        return _next(console, args[1:])
+        return _next(session, console, args[1:])
     if sub == "path":
         return _path(console)
-    console.print(f"[{ERROR}]usage:[/] /work [list|add|done|next|path]")
+    console.print(f"[{ERROR}]usage:[/] /work [list|add|edit|done|next|path]")
     return True
 
 
 _WORK_FIRST_ARGS: tuple[tuple[str, str], ...] = (
     ("list", "list work items (/work list [status])"),
     ("add", "add a durable work item (/work add <title>)"),
+    ("edit", "edit a work item's title and details (/work edit [id])"),
     ("done", "mark one or more work items complete (/work done <id>)"),
     ("next", "rank open work items by priority and due date"),
     ("path", "print the work-item store path"),
@@ -218,12 +247,14 @@ COMMANDS: list[SlashCommand] = [
             "/work",
             "/work list [open|active|blocked|deferred|completed|all] [project]",
             "/work add <title> [--project <name>] [--priority <low|normal|high|urgent>]",
+            "/work edit [id-or-title] [--title <title>] [--priority <priority>] [--project <name>] [--owner <name>] [--due <date>]",
             "/work done [id-or-title] [more...]",
             "/work next [project]",
             "/work path",
         ),
         notes=(
             "Use /tasks for OpenSRE runtime jobs; /work is for durable human todos.",
+            "Interactive lists search by title, project, or ID; Esc closes to the full list.",
             "Omit the completion target to choose an unfinished work item in the interactive terminal.",
             "To schedule a reminder, use `opensre work add <title> --remind-at <datetime> "
             "--target <provider>:<chat-id>`, or ask from a connected chat.",

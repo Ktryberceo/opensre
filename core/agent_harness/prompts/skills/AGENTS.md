@@ -209,14 +209,13 @@ Do not couple separate steps with wording such as "alongside", "at the same
 time", or "in the same response".
 
 The runtime (`core.tool.execution`) runs a response's tool calls in the order
-the model listed them. Consecutive read-only `ACTION` calls (side-effect level
-`none` or `read_only`) run at the same time, up to eight at once, unless the
-tool receives the runtime context: such a tool can change the session
-(`skill_view` activates a skill), so it runs alone. Every other call runs
+the model listed them. Consecutive `concurrency_safe` read-only `ACTION`
+calls (side-effect level `none` or `read_only`, no approval or runtime
+context) run at the same time, up to ten at once. Every other call runs
 alone, after the calls before it. Results always come back in the
-listed order, and hooks (plan guard, approvals, duplicate guard) still check
-each call in that order. A response may batch several independent calls; a
-call that depends on an earlier call's result belongs in the next response.
+listed order, and hooks (plan guard, approvals, duplicate guard) run under
+one lock so callbacks never overlap. A response may batch several independent
+calls; a call that depends on an earlier call's result belongs in the next response.
 `OPENSRE_PARALLEL_TOOL_CALLS=0` runs every call alone. Every tool declares its
 role on its contract (`ToolRole`, replacing the old `parallel_safe` flag):
 
@@ -507,7 +506,6 @@ Current collection:
 | `measuring-github-star-velocity` | tool usage | `tools/system/python_execution_tool/skills/…` | `execute_python_code` |
 | `summarizing-posthog-analytics` | tool usage | `integrations/posthog/tools/skills/…` | PostHog MCP tools |
 | `summarizing-sentry-issues` | tool usage | `integrations/sentry/tools/skills/…` | Sentry issue and uptime tools |
-| `querying-yandex-cloud` | tool usage | `integrations/yandex_cloud/tools/` | `find_yc_api`, `execute_yc_operation` |
 
 The onboarding tree's pre-convention slugs (`onboarding-cicd-fix`,
 `cicd-analytics-demo`, `cicd-reliability-agent`, `slack-handoff`) and the

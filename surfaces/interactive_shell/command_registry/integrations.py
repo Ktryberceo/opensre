@@ -14,6 +14,7 @@ from surfaces.interactive_shell.command_registry.cli_parity import (
     publish_headless_slash_response,
     run_cli_command,
 )
+from surfaces.interactive_shell.command_registry.integration_verification import verify_connection
 from surfaces.interactive_shell.command_registry.setup_resume import resume_after_setup
 from surfaces.interactive_shell.command_registry.types import SlashCommand
 from surfaces.interactive_shell.runtime import Session
@@ -317,6 +318,8 @@ def _use_browser(console: Console) -> bool:
 
 
 def _browse_connections(session: Session, console: Console, *, mcp: bool) -> bool:
+    from config.scope_context import current_scope
+    from infrastructure.harness_providers import integration_sources_stamp
     from integrations.registry import SUPPORTED_VERIFY_SERVICES, resolve_management_service
 
     command = "/mcp list" if mcp else "/integrations list"
@@ -336,6 +339,10 @@ def _browse_connections(session: Session, console: Console, *, mcp: bool) -> boo
         )
 
     names = repl_data.configured_integration_names()
+    check_key = (current_scope(), integration_sources_stamp())
+    if session.terminal.connection_check_key != check_key:
+        session.terminal.connection_checks = {}
+        session.terminal.connection_check_key = check_key
     if mcp:
         names = [name for name in names if name in MCP_INTEGRATION_SERVICES]
     entries = [
@@ -343,13 +350,11 @@ def _browse_connections(session: Session, console: Console, *, mcp: bool) -> boo
         for name in names
     ]
     set_browser_outcome()
-    selected = browse_integrations(entries, mcp=mcp)
+    selected = browse_integrations(
+        entries, mcp=mcp, verify=verify_connection, checks=session.terminal.connection_checks
+    )
     if selected is None:
         return True
-    if selected.action == "verify":
-        result = _run_verify(session, console, selected.service)
-        set_browser_outcome()
-        return result
     if selected.action == "remove":
         result = _handle_remove(session, console, selected.service)
         set_browser_outcome()

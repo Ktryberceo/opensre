@@ -9,9 +9,13 @@ outages as success.
 
 from __future__ import annotations
 
+import contextlib
 import logging
+from contextlib import AbstractContextManager
 
 from config.constants.scheduler import SCHEDULED_TASK_TRACE_KEY
+from config.credit_attribution import bound_credit_actor, credit_actor_id
+from config.scope_context import bound_storage_scope, current_scope
 from core.agent_harness import (
     is_legacy_skill_name,
     normalize_skill_name,
@@ -19,6 +23,8 @@ from core.agent_harness import (
     resolve_scheduled_skill,
 )
 from infrastructure.observability.trace.trace_session import inherit_trace_session
+from infrastructure.scheduling.scheduler.loop_constants import LOOP_CREATED_BY_PARAM
+from infrastructure.scheduling.scheduler.loop_owner import unattended_scope
 from infrastructure.scheduling.scheduler.loop_prompt import current_loop_prompt
 from infrastructure.scheduling.scheduler.operation_log import record_scheduler_task_operation
 from infrastructure.scheduling.scheduler.runners import SchedulerRunners
@@ -30,7 +36,7 @@ from infrastructure.scheduling.scheduler.sources import (
     SCHEDULED_SENTRY_MORNING_DIGEST,
     SCHEDULED_SENTRY_UPTIME_WATCH,
 )
-from infrastructure.scheduling.scheduler.storage import update_task
+from infrastructure.scheduling.scheduler.storage import patch_scheduler_skill_pin
 from infrastructure.scheduling.scheduler.types import ScheduledTask, TaskKind
 
 logger = logging.getLogger(__name__)
@@ -50,18 +56,39 @@ def build_message(task: ScheduledTask, runners: SchedulerRunners) -> str:
     session when there is one (the shell that started this scheduler), else
     under the task id, so ticks of one loop share one trace session. A tick
     fired from inside a turn (``/loops run``) inherits that turn's session and
-    still gains the scheduled tag and task metadata.
+    still gains the scheduled tag and task metadata. Its credits are spent for
+    the loop's creator, unless the tick runs inside a member's turn. Outside a
+    turn, a private loop's tick acts as its owner, with their own accounts.
     """
-    with inherit_trace_session(
-        runners.host_session_id() or task.id,
-        tags=(SCHEDULED_TRACE_TAG,),
-        metadata={
-            SCHEDULED_TASK_TRACE_KEY: task.id,
-            "task_name": task.name,
-            "task_kind": task.kind.value,
-        },
+    with (
+        _acting_as_owner(task),
+        inherit_trace_session(
+            runners.host_session_id() or task.id,
+            tags=(SCHEDULED_TRACE_TAG,),
+            metadata={
+                SCHEDULED_TASK_TRACE_KEY: task.id,
+                "task_name": task.name,
+                "task_kind": task.kind.value,
+            },
+        ),
+        bound_credit_actor(_unattended_credit_actor(task)),
     ):
         return _build_message(task, runners)
+
+
+def _acting_as_owner(task: ScheduledTask) -> AbstractContextManager[object]:
+    """Bind a private loop's owner for a tick no member's turn is running; else nothing."""
+    if current_scope() is not None:
+        return contextlib.nullcontext()
+    scope = unattended_scope(task)
+    return bound_storage_scope(scope) if scope is not None else contextlib.nullcontext()
+
+
+def _unattended_credit_actor(task: ScheduledTask) -> str | None:
+    """The loop's creator when no member's turn is running this tick, else ``None``."""
+    if credit_actor_id() is not None:
+        return None
+    return str(task.params.get(LOOP_CREATED_BY_PARAM) or "").strip() or None
 
 
 def _build_message(task: ScheduledTask, runners: SchedulerRunners) -> str:
@@ -220,6 +247,7 @@ def _build_manual_loop(task: ScheduledTask, runners: SchedulerRunners) -> str:
             "task_name": task.name,
             "loop_prompt": prompt,
             "window_hours": task.window_hours,
+            "timezone": task.timezone,
         }
         return runners.agent(payload)
     except Exception as exc:
@@ -254,15 +282,24 @@ def _record_followed_revision(task: ScheduledTask, revision: str) -> None:
     """Store the pin of a skill edit the schedule followed, and report the change."""
     previous = task.skill_revision
     task.skill_revision = revision
-    if not update_task(task):
+    stored = patch_scheduler_skill_pin(
+        task.id,
+        previous_name=task.skill_name,
+        previous_revision=previous,
+        skill_name=task.skill_name,
+        skill_revision=revision,
+    )
+    if stored is None:
         logger.warning(
             "Recurring skill task %s is not in the task store; running with an unsaved pin.",
             task.id,
         )
         return
+    if stored.skill_name != task.skill_name or stored.skill_revision != revision:
+        return
     record_scheduler_task_operation(
         "scheduled_skill_revision_changed",
-        task,
+        stored,
         extra={"from_revision": previous[:24], "to_revision": revision[:24]},
     )
 
@@ -275,10 +312,18 @@ def _migrate_renamed_skill(task: ScheduledTask) -> None:
     this never accepts an arbitrary recipe change unattended.
     """
     previous = task.skill_name
+    previous_revision = task.skill_revision
     skill_name, skill_revision = pin_recurring_skill(normalize_skill_name(previous))
     task.skill_name = skill_name
     task.skill_revision = skill_revision
-    if not update_task(task):
+    stored = patch_scheduler_skill_pin(
+        task.id,
+        previous_name=previous,
+        previous_revision=previous_revision,
+        skill_name=skill_name,
+        skill_revision=skill_revision,
+    )
+    if stored is None:
         logger.warning(
             "Recurring skill task %s (%s -> %s) is not in the task store; running unmigrated.",
             task.id,
@@ -286,9 +331,11 @@ def _migrate_renamed_skill(task: ScheduledTask) -> None:
             skill_name,
         )
         return
+    if stored.skill_name != skill_name or stored.skill_revision != skill_revision:
+        return
     record_scheduler_task_operation(
         "scheduled_skill_renamed",
-        task,
+        stored,
         extra={"from_skill_name": previous},
     )
 

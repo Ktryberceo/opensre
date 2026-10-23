@@ -17,8 +17,8 @@ CI_ANALYSIS_PREFETCH_MAX_AGE_SECONDS: Final[float] = 300.0
 TOOL_PREFETCH_MAX_ENTRIES: Final[int] = 4
 # Set to 0/false/off to run every tool call of a response one after another (kill switch).
 OPENSRE_PARALLEL_TOOL_CALLS_ENV: Final[str] = "OPENSRE_PARALLEL_TOOL_CALLS"
-# Read-only calls from one model response that run at once, at most (one thread each).
-MAX_PARALLEL_TOOL_CALLS: Final[int] = 8
+# Concurrency-safe calls from one model response that run at once (one thread each).
+MAX_CONCURRENT_TOOL_CALLS: Final[int] = 10
 
 
 class ToolBlockedBy(StrEnum):
@@ -47,6 +47,8 @@ class ToolSkippedBy(StrEnum):
 __all__ = [
     "CI_ANALYSIS_PREFETCH_MAX_AGE_SECONDS",
     "DEFAULT_APPROVAL_EXPIRY_SECONDS",
+    "MAX_CONCURRENT_TOOL_CALLS",
+    "OPENSRE_PARALLEL_TOOL_CALLS_ENV",
     "TOOL_PREFETCH_MAX_ENTRIES",
     "WORKSPACE_SCAN_PREFETCH_MAX_AGE_SECONDS",
     "ToolBlockedBy",

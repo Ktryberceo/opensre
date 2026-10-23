@@ -40,8 +40,9 @@ def plan_required(
 ) -> bool:
     """True when a loaded skill's second work call has no open plan.
 
-    ``work_in_flight`` counts work calls already let through whose results are
-    not recorded yet (calls of one response that run at the same time).
+    ``work_in_flight`` counts work calls already admitted that have not
+    returned. Calls that run together are all admitted before any returns, so
+    without it every call in such a batch would pass as the first.
     """
     if not is_action or not is_plan_work_name(tool_name, arguments):
         return False

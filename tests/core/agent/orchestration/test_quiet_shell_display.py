@@ -575,6 +575,21 @@ def test_plan_snapshots_are_stripped_from_the_reply() -> None:
     assert "✓ Inspect path" not in shown
 
 
+def test_settled_plan_checklist_is_stripped_from_the_reply() -> None:
+    """A finished checklist (``Plan complete`` plus work notes) is not part of the reply."""
+    reply = (
+        "The disk is full.\n\nPlan complete · 2/2\n  ✓ Check disk\n      ↳ shell_run\n  ✓ Report\n"
+    )
+    result = _Result(tool_results=[], final_text=reply)
+
+    _rt, display_chunks, _use_final = _compose_response(result, _Session(), _counts(0))
+    shown = "\n".join(display_chunks)
+
+    assert shown == "The disk is full."
+    assert "Plan complete" not in shown
+    assert "Check disk" not in shown
+
+
 def _outcome(status: str) -> str:
     return f"- **Outcome:** {status}\n- **Repository:** example/demo"
 
@@ -1064,3 +1079,48 @@ def test_tool_reply_text_is_shown_when_the_model_has_no_closing() -> None:
     assert display_chunks == [card]
     assert response_text == card
     assert use_final_text is False
+
+
+class _ChatSession:
+    """A gateway session: no terminal, so no tool transcript and no Ctrl+O."""
+
+    def __init__(self) -> None:
+        self.history: list[dict[str, Any]] = []
+        self.pending_user_choice: object | None = None
+
+
+def test_a_chat_reply_is_the_closing_without_tool_previews() -> None:
+    """Slack showed a fenced dump of gh errors and file reads after the answer."""
+    gh_error = (
+        "GitHub action failed to run: gh output exceeded 6000 characters and the "
+        "JSON was cut, so this result is incomplete and must not be used."
+    )
+    file_read = "\n".join(f"- rule {index} from AGENTS.md" for index in range(80))
+    closing = "Opened PR #6754 against `main`, deleting only `SKILL_CONTRACT_REVIEW.md`."
+    result = _Result(
+        tool_results=[
+            (
+                ToolCall(id="1", name="github_cli", input={}),
+                _ToolResult({"ok": False, "error": gh_error}, is_error=True),
+            ),
+            (ToolCall(id="2", name="github_cli", input={}), _ToolResult(_payload(file_read))),
+            (
+                ToolCall(id="3", name="github_cli", input={}),
+                _ToolResult(_payload(_outcome("succeeded. PR #6754 opened."))),
+            ),
+        ],
+        final_text=closing,
+    )
+
+    response_text, display_chunks, use_final_text = _compose_response(
+        result, _ChatSession(), _counts(3)
+    )
+    shown = "\n".join(display_chunks)
+
+    assert shown.startswith(closing)
+    assert "PR #6754 opened" in shown
+    for debris in ("```", "Ctrl+O", "GitHub action failed", "rule 0"):
+        assert debris not in shown
+    # History keeps every result for the next turn.
+    assert "rule 0" in response_text
+    assert use_final_text is True

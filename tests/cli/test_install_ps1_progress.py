@@ -11,11 +11,27 @@ from pathlib import Path
 
 import pytest
 
+from config.constants.github import GITHUB_TOKEN_ENV, OPENSRE_INSTALL_GITHUB_TOKEN_ENV
+
 INSTALL_PS1 = Path(__file__).parents[2] / "install.ps1"
 
 
 def _powershell() -> str | None:
     return shutil.which("pwsh") or shutil.which("powershell")
+
+
+def test_install_ps1_is_ascii_only() -> None:
+    # Windows PowerShell 5.1 reads a BOM-less script in the legacy ANSI code page,
+    # where the bytes of characters like U+2500 or U+2014 decode to a curly quote
+    # that ends the string early and breaks parsing of the whole installer.
+    offenders = [
+        (number, char)
+        for number, line in enumerate(INSTALL_PS1.read_bytes().decode("utf-8").splitlines(), 1)
+        for char in line
+        if ord(char) > 127
+    ]
+
+    assert offenders == []
 
 
 def test_install_ps1_defines_branded_progress_helpers() -> None:
@@ -65,6 +81,46 @@ def test_install_ps1_preserves_retry_contract_source() -> None:
         "$statusCode -ge 400 -and $statusCode -lt 500 "
         "-and $statusCode -ne 403 -and $statusCode -ne 429"
     ) in source
+
+
+@pytest.mark.parametrize("token", ["", "canary-token"])
+def test_powershell_scopes_canary_token_to_github_metadata(token: str) -> None:
+    shell = _powershell()
+    if shell is None:
+        pytest.skip("PowerShell is not installed in this environment.")
+
+    script = f"""
+        . '{INSTALL_PS1}' -SkipMain
+        $env:OPENSRE_INSTALL_VERBOSE = '0'
+        function Invoke-RestMethod {{
+            param([string]$Uri, [hashtable]$Headers)
+            if ($env:OPENSRE_INSTALL_GITHUB_TOKEN) {{ throw 'Token leaked into environment' }}
+            return @{{ uri = $Uri; headers = $Headers }}
+        }}
+        @{{
+            metadata = Invoke-OpenSreRestMethod -Uri 'https://api.github.com/repos/Tracer-Cloud/opensre/releases/latest'
+            other = Invoke-OpenSreRestMethod -Uri 'https://api.github.com.example.com/releases/latest'
+            download_headers = Get-OpenSreRequestHeaders
+            user_token = $env:GITHUB_TOKEN
+        }} | ConvertTo-Json -Depth 4
+    """
+    result = subprocess.run(
+        [shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+        env=os.environ | {OPENSRE_INSTALL_GITHUB_TOKEN_ENV: token, GITHUB_TOKEN_ENV: "user-token"},
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    recorded = json.loads(result.stdout)
+    assert recorded["metadata"]["headers"].get("Authorization") == (
+        f"Bearer {token}" if token else None
+    )
+    assert "Authorization" not in recorded["other"]["headers"]
+    assert "Authorization" not in recorded["download_headers"]
+    assert recorded["user_token"] == "user-token"
 
 
 def test_install_ps1_defaults_to_main_build_channel() -> None:

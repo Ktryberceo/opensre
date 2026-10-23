@@ -10,7 +10,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from config.constants.llm import LLM_AUTH_METHOD_ENV
+from config.constants.llm import LLM_AUTH_METHOD_ENV, LLM_PROVIDER_ENV, OPENSRE_LLM_CONNECTION_ENV
 from config.env_file import (
     PROJECT_ENV_PATH,
     env_assignment_key,
@@ -99,6 +99,30 @@ def _remove_keys(lines: list[str], keys_to_remove: set[str]) -> list[str]:
     return result
 
 
+def reload_provider_selection() -> None:
+    """Apply a child login's saved connection without reloading unrelated exports."""
+    from config.local_env import get_project_env_path
+    from core.llm.transport_mode import LLM_TRANSPORT_ENV
+    from surfaces.shared.llm_setup.catalog import PROVIDER_BY_VALUE
+
+    lines = read_env_lines(get_project_env_path())
+    provider_value = _env_value_from_lines(lines, LLM_PROVIDER_ENV)
+    provider = PROVIDER_BY_VALUE.get(provider_value or "")
+    if provider is None:
+        return
+    keys = _provider_specific_keys(provider) | {
+        LLM_PROVIDER_ENV,
+        OPENSRE_LLM_CONNECTION_ENV,
+        LLM_TRANSPORT_ENV,
+    }
+    for key in keys:
+        value = _env_value_from_lines(lines, key)
+        if value is not None:
+            os.environ[key] = value
+        elif key == LLM_TRANSPORT_ENV:
+            os.environ.pop(key, None)
+
+
 def sync_provider_env(
     *,
     provider: ProviderOption,
@@ -179,6 +203,7 @@ def sync_provider_env(
 
     values: dict[str, str] = {
         "LLM_PROVIDER": provider.value,
+        OPENSRE_LLM_CONNECTION_ENV: "local",
         provider.model_env: resolved_model,
     }
     if provider.legacy_model_env:

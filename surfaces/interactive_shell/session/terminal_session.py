@@ -23,7 +23,11 @@ from surfaces.interactive_shell.session.terminal_metrics import TerminalMetrics
 if TYPE_CHECKING:
     from prompt_toolkit.history import History
 
-    from core.agent_harness.spi.session_state import SetupResume
+    from core.agent_harness.spi.session_state import PendingUserChoice, SetupResume
+    from surfaces.interactive_shell.session.connection_checks import (
+        ConnectionCheck,
+        ConnectionCheckKey,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +58,15 @@ class ActionLogEntry:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class ClosedChoice:
+    """A ``/choose`` menu the user closed without answering, kept so ``/choose`` reopens it."""
+
+    pending: PendingUserChoice
+    skill: str | None
+    """The skill that asked it; reopening restores it so the answer resumes that flow."""
+
+
 def _autosubmit_label(text: str) -> str:
     """Name a queued autosubmit for a log line without recording what the user wrote."""
     stripped = text.strip()
@@ -66,6 +79,14 @@ def _autosubmit_label(text: str) -> str:
 class TerminalSession:
     """Shell-surface session state, composed onto ``Session`` for the interactive shell."""
 
+    connection_checks: dict[str, ConnectionCheck] = field(
+        default_factory=dict, repr=False, kw_only=True
+    )
+    """Last explicit check results, shared by the connection lists for this session only."""
+
+    connection_check_key: ConnectionCheckKey | None = field(default=None, repr=False, kw_only=True)
+    """Scope/source snapshot that owns the cached display results."""
+
     active_theme_name: str = "green"
     """Interactive shell palette name for this REPL session (``/theme``, prompts)."""
 
@@ -77,6 +98,9 @@ class TerminalSession:
 
     auto_level: AutoLevel = DEFAULT_AUTO_LEVEL
     """Auto (Off|Low|Med|High) shown above the input box."""
+
+    provider_model: tuple[str, str] = ("unknown", "unknown")
+    """Display route resolved at prompt setup and after turns, never during redraw."""
 
     prompt_history_backend: History | None = None
     """The live ``prompt_toolkit.History`` object backing the input prompt.
@@ -109,13 +133,6 @@ class TerminalSession:
 
     ci_fix_count_fn: Callable[[], int] | None = field(default=None, repr=False)
     """Cached deployment repair count; reading it performs no disk or network I/O."""
-
-    fleet_sampler_starter: Callable[[], None] | None = field(default=None, repr=False)
-    """Loop-owned hook to lazily start the fleet sampler on first live ``/fleet`` use.
-
-    Set by the interactive-shell controller so the sampler (and its ``psutil`` dependency)
-    stays out of base REPL startup and only runs when fleet monitoring is actually
-    requested. Thread-safe: the starter marshals task creation onto the REPL event loop."""
 
     startup_work_release: Callable[[], None] | None = field(default=None, repr=False)
     """Launch hook that starts work held back until the shell first waits on the user.
@@ -167,6 +184,11 @@ class TerminalSession:
     Written through ``core.agent_harness.spi.session_state`` (``arm_setup_resume``);
     dropped by a typed turn, a closed menu, a new demo, and ``/new``."""
 
+    closed_choice: ClosedChoice | None = None
+    """The menu last closed with Esc or Ctrl-C; a typed ``/choose`` reopens it.
+
+    Dropped by an answered or reopened menu, a typed request, and ``/new``."""
+
     pending_choice_response: str | None = None
     goal_paint_signature: GoalPaintSignature | None = None
     """What the last session-goal block showed; unchanged goals repaint as one line."""
@@ -190,6 +212,17 @@ class TerminalSession:
 
     The closing reply must not repeat those results. The response composer
     reads and clears the flag."""
+
+    live_reply: Any = None
+    """The model reply printing into the transcript while it streams (a ``ReplyStream``).
+
+    The action observer opens it on the first streamed text; the shell sink
+    finishes a closing with the rest of the turn's reply."""
+
+    streamed_replies: list[str] = field(default_factory=list)
+    """Replies of this run already in the transcript because they streamed.
+
+    The response composer does not show them a second time."""
 
     action_log_entries: list[ActionLogEntry] = field(default_factory=list)
     """Tool calls buffered for the current turn's grouped action log (call order).
@@ -388,11 +421,6 @@ class TerminalSession:
         """Start launch work held for the first wait on the user (no-op when unwired)."""
         if self.startup_work_release is not None:
             self.startup_work_release()
-
-    def ensure_fleet_sampler_started(self) -> None:
-        """Request that the fleet sampler start (no-op if unwired or already running)."""
-        if self.fleet_sampler_starter is not None:
-            self.fleet_sampler_starter()
 
     def set_turn_outcome_hint(self, hint: str | None) -> None:
         """Attach a structured outcome for the current terminal handler."""

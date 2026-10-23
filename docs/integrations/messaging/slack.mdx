@@ -79,7 +79,8 @@ Treat this URL like a password — anyone holding it can post to your channel. I
 
 1. In your Slack app settings, enable **Socket Mode** and create an app-level token with the `connections:write` scope (`xapp-…`).
 2. Under **OAuth & Permissions**, grant the bot scopes below, then install the app and copy the bot token (`xoxb-…`).
-3. Under **Event Subscriptions**, subscribe to the bot events `app_mention` and `message.im`.
+3. Under **Event Subscriptions**, subscribe to the bot events `app_mention` and `message.im`. Add `agent_session_stopped` to make Slack's stop button work while OpenSRE is replying.
+4. Optional: under **Interactivity & Shortcuts**, turn interactivity on and create a shortcut **On messages** named `Stop OpenSRE` with the callback ID `stop_opensre`. It shows in every message's hover menu (⋮) and stops the reply running in that thread.
 
 **Bot Token Scopes (Socket Mode chat + teammate tools):**
 
@@ -223,7 +224,7 @@ opensre gateway status
 | `opensre gateway logs -f` | Follow live gateway logs |
 | `opensre gateway stop` | Stop the daemon |
 
-Built-in chat commands: `/new` (fresh session), `/help`, `/pair <code>`.
+Built-in chat commands: `/new` (fresh session), `/help`, `/pair <code>`, and `stop` to stop the reply running in the thread.
 
 While a turn runs, the gateway adds an 👀 (`eyes`) reaction on the inbound message, then swaps to ✅ (`white_check_mark`) when the reply is finalized.
 

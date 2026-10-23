@@ -4,7 +4,8 @@ Contract:
   POST {OPENSRE_WEBAPP_URL}/api/credits/consume
   Authorization: Bearer <OPENSRE_ACCOUNT_TOKEN>  (org-scoped gateway token)
   Idempotency-Key: <org>:<caller key>   (optional; see ``idempotency_key``)
-  body: {"amount": <number>, "organizationId": <org>, "reason": <str>}
+  body: {"amount": <number>, "organizationId": <org>, "reason": <str>,
+         "actor": <Slack or Clerk user id, optional>}
   Success (2xx): {"balance", "consumed", "reason"}.
   Shortfall: HTTP 402 with {"error": "insufficient_credits", "balance", "required"}.
 
@@ -73,6 +74,7 @@ def consume_credits(
     amount: int = 1,
     reason: str,
     idempotency_key: str | None = None,
+    actor: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> CreditsOutcome:
     """POST one credit consumption to the webapp ledger and classify the result.
@@ -87,6 +89,9 @@ def consume_credits(
             with the resolved org so a transport id that is only unique per
             transport cannot collide across tenants. Whether a repeat is
             actually safe is the webapp's to guarantee, not this client's.
+        actor: The member the charge is spent for (Slack or Clerk user id);
+            the webapp charts it on Settings → Usage when it resolves to a
+            current member, and leaves the charge unattributed otherwise.
         metadata: Optional extra JSON fields merged into the request body.
 
     Returns:
@@ -119,6 +124,8 @@ def consume_credits(
         "organizationId": org,
         "reason": reason,
     }
+    if actor:
+        payload["actor"] = actor
 
     headers = {"Authorization": f"Bearer {token}"}
     if idempotency_key:

@@ -288,6 +288,30 @@ if TYPE_CHECKING:
     from config.constants.capabilities import (
         SCHEDULER_HOST_IN_PROCESS as SCHEDULER_HOST_IN_PROCESS,
     )
+    from config.constants.chatgpt import (
+        CHATGPT_AUTHORIZE_URL as CHATGPT_AUTHORIZE_URL,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_CALLBACK_PATH as CHATGPT_CALLBACK_PATH,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_DISCOVERY_URL as CHATGPT_DISCOVERY_URL,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_DYNAMIC_CLIENT as CHATGPT_DYNAMIC_CLIENT,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_ISSUER as CHATGPT_ISSUER,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_RESOURCE as CHATGPT_RESOURCE,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_SCOPES as CHATGPT_SCOPES,
+    )
+    from config.constants.chatgpt import (
+        CHATGPT_TOKEN_URL as CHATGPT_TOKEN_URL,
+    )
     from config.constants.ci_fixes import (
         CI_FIX_COUNT_LABEL as CI_FIX_COUNT_LABEL,
     )
@@ -732,6 +756,27 @@ if TYPE_CHECKING:
     from config.constants.kafka import (
         KAFKA_SECURITY_PROTOCOL_ENV as KAFKA_SECURITY_PROTOCOL_ENV,
     )
+    from config.constants.knowledge import (
+        KNOWLEDGE_DIRNAME as KNOWLEDGE_DIRNAME,
+    )
+    from config.constants.knowledge import (
+        KNOWLEDGE_READERS_REFRESH_SECONDS as KNOWLEDGE_READERS_REFRESH_SECONDS,
+    )
+    from config.constants.knowledge import (
+        KNOWLEDGE_SCAN_CHECK_INTERVAL_SECONDS as KNOWLEDGE_SCAN_CHECK_INTERVAL_SECONDS,
+    )
+    from config.constants.knowledge import (
+        KNOWLEDGE_SCAN_MAX_AGE_SECONDS as KNOWLEDGE_SCAN_MAX_AGE_SECONDS,
+    )
+    from config.constants.knowledge import (
+        OPENSRE_KNOWLEDGE_DIR_ENV as OPENSRE_KNOWLEDGE_DIR_ENV,
+    )
+    from config.constants.knowledge import (
+        OPENSRE_KNOWLEDGE_DISABLED_ENV as OPENSRE_KNOWLEDGE_DISABLED_ENV,
+    )
+    from config.constants.knowledge import (
+        OPENSRE_KNOWLEDGE_SCAN_MESSAGES_ENV as OPENSRE_KNOWLEDGE_SCAN_MESSAGES_ENV,
+    )
     from config.constants.kubernetes import (
         KUBECONFIG_CONTENT_ENV as KUBECONFIG_CONTENT_ENV,
     )
@@ -743,6 +788,12 @@ if TYPE_CHECKING:
     )
     from config.constants.kubernetes import (
         KUBECONFIG_PATH_ENV as KUBECONFIG_PATH_ENV,
+    )
+    from config.constants.llm import (
+        ANTHROPIC_DEFER_LOADING_KEY as ANTHROPIC_DEFER_LOADING_KEY,
+    )
+    from config.constants.llm import (
+        ANTHROPIC_THINKING_BINDING_KEY as ANTHROPIC_THINKING_BINDING_KEY,
     )
     from config.constants.llm import (
         AZURE_OPENAI_API_KEY_ENV as AZURE_OPENAI_API_KEY_ENV,
@@ -772,10 +823,16 @@ if TYPE_CHECKING:
         OPENAI_PROMPT_CACHE_KEY_PREFIX as OPENAI_PROMPT_CACHE_KEY_PREFIX,
     )
     from config.constants.llm import (
+        OPENSRE_LLM_CONNECTION_ENV as OPENSRE_LLM_CONNECTION_ENV,
+    )
+    from config.constants.llm import (
         OPENSRE_LLM_NATIVE_STRUCTURED_OUTPUT_ENV as OPENSRE_LLM_NATIVE_STRUCTURED_OUTPUT_ENV,
     )
     from config.constants.llm import (
         OPENSRE_REACT_GOAL_LLM_REVIEW_ENV as OPENSRE_REACT_GOAL_LLM_REVIEW_ENV,
+    )
+    from config.constants.llm import (
+        OPENSRE_SUBSCRIPTION_AUTH_DIR_ENV as OPENSRE_SUBSCRIPTION_AUTH_DIR_ENV,
     )
     from config.constants.mariadb import (
         MARIADB_DATABASE_ENV as MARIADB_DATABASE_ENV,
@@ -954,6 +1011,9 @@ if TYPE_CHECKING:
     from config.constants.paths import ci_fix_ledger_path as ci_fix_ledger_path
     from config.constants.paths import (
         ensure_opensre_tmp_dir as ensure_opensre_tmp_dir,
+    )
+    from config.constants.paths import (
+        get_knowledge_dir as get_knowledge_dir,
     )
     from config.constants.paths import (
         get_memory_dir as get_memory_dir,
@@ -1196,6 +1256,9 @@ if TYPE_CHECKING:
         SCHEDULER_MISSED_FIRE_GRACE_SECONDS as SCHEDULER_MISSED_FIRE_GRACE_SECONDS,
     )
     from config.constants.scheduler import (
+        SCHEDULER_SCHEDULE_CHANGED_AT_PARAM as SCHEDULER_SCHEDULE_CHANGED_AT_PARAM,
+    )
+    from config.constants.scheduler import (
         STATELESS_LOOP_IDLE_REPLY as STATELESS_LOOP_IDLE_REPLY,
     )
     from config.constants.scheduler import (
@@ -1393,6 +1456,27 @@ if TYPE_CHECKING:
     from config.constants.telegram import (
         TELEGRAM_DEFAULT_CHAT_ID_ENV as TELEGRAM_DEFAULT_CHAT_ID_ENV,
     )
+    from config.constants.telemetry import (
+        TELEMETRY_CLICKHOUSE_PASSWORD_ENV as TELEMETRY_CLICKHOUSE_PASSWORD_ENV,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_CLICKHOUSE_TIMEOUT_SECONDS as TELEMETRY_CLICKHOUSE_TIMEOUT_SECONDS,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_EVIDENCE_MAX_CHARS as TELEMETRY_EVIDENCE_MAX_CHARS,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_MODEL_TIMEOUT_SECONDS as TELEMETRY_MODEL_TIMEOUT_SECONDS,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_QUERY_MAX_RESPONSE_BYTES as TELEMETRY_QUERY_MAX_RESPONSE_BYTES,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_QUERY_MAX_RESULT_ROWS as TELEMETRY_QUERY_MAX_RESULT_ROWS,
+    )
+    from config.constants.telemetry import (
+        TELEMETRY_REPORT_MAX_CHARS as TELEMETRY_REPORT_MAX_CHARS,
+    )
     from config.constants.tempo import (
         TEMPO_API_KEY_ENV as TEMPO_API_KEY_ENV,
     )
@@ -1493,6 +1577,12 @@ if TYPE_CHECKING:
         MODEL_ONLY_PRESENTATION_KEY as MODEL_ONLY_PRESENTATION_KEY,
     )
     from config.constants.tool_discovery import (
+        REPLAY_WITH_HISTORY_KEY as REPLAY_WITH_HISTORY_KEY,
+    )
+    from config.constants.tool_discovery import (
+        REQUEST_SCOPED_RESULTS_METADATA_KEY as REQUEST_SCOPED_RESULTS_METADATA_KEY,
+    )
+    from config.constants.tool_discovery import (
         SESSION_GOAL_CONTROL_TOOL_NAMES as SESSION_GOAL_CONTROL_TOOL_NAMES,
     )
     from config.constants.tool_discovery import (
@@ -1517,6 +1607,9 @@ if TYPE_CHECKING:
         TOOL_FAILURE_STATE_KEY as TOOL_FAILURE_STATE_KEY,
     )
     from config.constants.tool_discovery import TOOL_FAILURE_STATES as TOOL_FAILURE_STATES
+    from config.constants.tool_discovery import (
+        TOOL_SEARCH_MATCHES_KEY as TOOL_SEARCH_MATCHES_KEY,
+    )
     from config.constants.tool_discovery import (
         TOOL_SEARCH_MAX_RESULTS as TOOL_SEARCH_MAX_RESULTS,
     )
@@ -1549,7 +1642,7 @@ if TYPE_CHECKING:
         DEFAULT_APPROVAL_EXPIRY_SECONDS as DEFAULT_APPROVAL_EXPIRY_SECONDS,
     )
     from config.constants.tooling import (
-        MAX_PARALLEL_TOOL_CALLS as MAX_PARALLEL_TOOL_CALLS,
+        MAX_CONCURRENT_TOOL_CALLS as MAX_CONCURRENT_TOOL_CALLS,
     )
     from config.constants.tooling import (
         OPENSRE_PARALLEL_TOOL_CALLS_ENV as OPENSRE_PARALLEL_TOOL_CALLS_ENV,
@@ -1640,52 +1733,4 @@ if TYPE_CHECKING:
     )
     from config.constants.work_items import (
         WORK_ITEM_REMINDER_RUN_AT_PARAM as WORK_ITEM_REMINDER_RUN_AT_PARAM,
-    )
-    from config.constants.x_mcp import (
-        X_MCP_AUTH_TOKEN_ENV as X_MCP_AUTH_TOKEN_ENV,
-    )
-    from config.constants.x_mcp import (
-        X_MCP_URL_ENV as X_MCP_URL_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        AUTH_MODE_IAM_TOKEN as AUTH_MODE_IAM_TOKEN,
-    )
-    from config.constants.yandex_cloud import (
-        AUTH_MODE_METADATA as AUTH_MODE_METADATA,
-    )
-    from config.constants.yandex_cloud import (
-        AUTH_MODE_OAUTH as AUTH_MODE_OAUTH,
-    )
-    from config.constants.yandex_cloud import (
-        AUTH_MODE_SA_KEY as AUTH_MODE_SA_KEY,
-    )
-    from config.constants.yandex_cloud import (
-        AUTH_MODE_SA_KEY_FILE as AUTH_MODE_SA_KEY_FILE,
-    )
-    from config.constants.yandex_cloud import (
-        YC_API_ENDPOINT_ENV as YC_API_ENDPOINT_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_CLOUD_ID_ENV as YC_CLOUD_ID_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_ENDPOINT_OVERRIDES_ENV as YC_ENDPOINT_OVERRIDES_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_FOLDER_ID_ENV as YC_FOLDER_ID_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_IAM_TOKEN_ENV as YC_IAM_TOKEN_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_SA_KEY_ENV as YC_SA_KEY_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_SA_KEY_FILE_ENV as YC_SA_KEY_FILE_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_TOKEN_ENV as YC_TOKEN_ENV,
-    )
-    from config.constants.yandex_cloud import (
-        YC_USE_METADATA_ENV as YC_USE_METADATA_ENV,
     )
