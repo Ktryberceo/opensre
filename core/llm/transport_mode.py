@@ -25,7 +25,10 @@ def use_litellm_for_provider(provider: str) -> bool:
 
     return (
         use_litellm_transport()
-        or provider in SUBSCRIPTION_BY_VALUE
+        or (
+            provider in SUBSCRIPTION_BY_VALUE
+            and SUBSCRIPTION_BY_VALUE[provider].transport == "litellm"
+        )
         or is_azure_openai_provider(provider)
         or is_vertex_ai_provider(provider)
     )

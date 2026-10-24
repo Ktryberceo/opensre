@@ -26,3 +26,10 @@ def subscription_adapter(provider: str) -> SubscriptionRegistration:
     if provider not in SUBSCRIPTION_BY_VALUE or provider not in SUBSCRIPTION_ADAPTERS:
         raise ValueError(f"No subscription adapter registered for '{provider}'.")
     return SUBSCRIPTION_ADAPTERS[provider]
+
+
+def register_subscription_adapter(provider: str, registration: SubscriptionRegistration) -> None:
+    """Install a catalogued integration-owned adapter at process composition time."""
+    if provider not in SUBSCRIPTION_BY_VALUE:
+        raise ValueError(f"Unknown subscription provider: {provider}")
+    SUBSCRIPTION_ADAPTERS[provider] = registration

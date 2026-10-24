@@ -78,6 +78,7 @@ PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
             label=provider.label,
             credential_kind=CredentialKind.SUBSCRIPTION,
             model_env=provider.model_env,
+            cli_model_env=provider.model_env if provider.transport == "cli" else None,
             allow_custom_models=True,
         )
         for provider in SUBSCRIPTION_PROVIDERS

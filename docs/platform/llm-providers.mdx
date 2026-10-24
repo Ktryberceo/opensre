@@ -49,6 +49,7 @@ Each provider has two model roles:
 
 | Provider | Setup | Model selection |
 | --- | --- | --- |
+| Claude subscription (via Claude Code) | `claude auth login`, then `opensre auth login claude-code-subscription` | CLI aliases: `sonnet` (default), `opus`, `haiku` |
 | ChatGPT | `opensre auth login chatgpt` | Models available to the signed-in account; `CHATGPT_MODEL` records the selected model |
 | Grok subscription (local testing) | `opensre auth login grok` | Browser login; no client-ID setup; `GROK_MODEL` records the selected account model |
 
@@ -201,6 +202,68 @@ opensre auth login anthropic
 opensre auth login deepseek
 opensre auth status
 ```
+
+## Claude subscription through Claude Code
+
+Install the official, unmodified Claude Code CLI, then sign in using your own eligible
+Claude subscription through its native flow:
+
+```bash
+claude auth login
+opensre auth login claude-code-subscription
+```
+
+The subscription picker also offers **Claude subscription (via Claude Code)**.
+OpenSRE connects an existing CLI login; if login is missing, complete `claude auth login`
+and retry. All authentication methods remain available in the official CLI and the
+ordinary `claude-code` connection remains available for API/cloud configurations.
+
+The required binary is `claude` on `PATH`. Optional `CLAUDE_CODE_SUBSCRIPTION_BIN`
+selects its installed path. Optional `--model sonnet|opus|haiku` selects a documented
+CLI alias; `sonnet` is the default. The non-secret choice is persisted as
+`CLAUDE_CODE_SUBSCRIPTION_MODEL`. Claude Code checks actual model access when invoked;
+these aliases are not an account-entitlement discovery endpoint.
+
+Setup selects `LLM_PROVIDER=claude-code-subscription` and
+`OPENSRE_LLM_CONNECTION=local`, preserving your OpenSRE account identity.
+`--no-set-provider` verifies the CLI connection without changing the active route.
+This connection works with `OPENSRE_DISABLE_KEYRING` because Claude Code owns the
+credential store. OpenSRE never reads, copies, refreshes, or stores Claude session tokens.
+
+```bash
+opensre auth status claude-code-subscription
+opensre auth verify claude-code-subscription
+opensre auth logout claude-code-subscription
+```
+
+Logout delegates to `claude auth logout`: it signs out the shared Claude Code session,
+including other applications using that session. To switch accounts, use the CLI's
+logout/login commands and reconnect; OpenSRE's `--profile` / `--new-account` options
+do not manage Claude Code accounts.
+
+Before each request, OpenSRE requires CLI-confirmed subscription authentication. API
+keys, explicit OAuth-token overrides, custom Anthropic base URLs, API-key helpers,
+and cloud-provider authentication are rejected for this connection. Remove conflicting
+overrides for subscription use, or select the ordinary `claude-code` connection.
+A cached status check does not allow a later request to bypass this check.
+
+**Claude Code's own extra-usage settings still apply.** OpenSRE does not choose an API-key
+fallback, but authentication status does not prove that extra usage is disabled in your
+Claude account. Check `/usage` and billing settings in Claude Code to manage plan limits
+and any paid extra usage. OpenSRE reports errors from rejected quota/permission requests
+and never silently switches to another provider or credential.
+
+Inference runs through the CLI's structured stream. Only text deltas reach the chat;
+a successful terminal result is required before an invocation succeeds. Missing/error
+results fail, cancellation stops the subprocess, and completed CLI token usage is retained.
+`CLAUDE_CODE_TIMEOUT_SECONDS` remains the optional invocation timeout (default 300 seconds,
+clamped to 30–600). LiteLLM is not used for this connection.
+
+This follows Anthropic's documented path for an end user signing into the
+[unmodified Claude Code binary](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products).
+It does not add third-party Claude.ai OAuth or direct subscription-token API access.
+Automated coverage uses a synthetic CLI; live plan consumption, renewal, and quota
+acceptance should be checked locally with your own subscription.
 
 ## ChatGPT subscription
 

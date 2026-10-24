@@ -21,6 +21,14 @@ class SubscriptionAuth:
     base_url: str
 
 
+@dataclass(frozen=True)
+class CLISubscriptionAuth:
+    """An attested vendor CLI session; credentials remain inside the vendor application."""
+
+    provider: str
+    detail: str
+
+
 class SubscriptionAdapter(Protocol):
     """Authentication lifecycle independent of billing and inference serialization."""
 
@@ -35,7 +43,7 @@ class SubscriptionAdapter(Protocol):
     ) -> str:
         """Authorize, select a model, then activate an isolated account atomically."""
 
-    def resolve(self) -> SubscriptionAuth:
+    def resolve(self) -> SubscriptionAuth | CLISubscriptionAuth:
         """Resolve/renew the selected credential without interaction or API-billing fallback."""
 
     def models(self) -> list[tuple[str, str]]:

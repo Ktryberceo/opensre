@@ -8,16 +8,25 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import closing, suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from pydantic import BaseModel
 
 from config.llm_reasoning_effort import ReasoningEffort, get_active_reasoning_effort
 from core.llm.shared.structured_output import StructuredOutputClient
-from core.llm.types import LLMResponse, ModelType
-from integrations.llm_cli.base import CLIInvocation, CLIProbe, LLMCLIAdapter
+from core.llm.shared.usage import emit_usage
+from core.llm.types import (
+    CancelProbe,
+    LLMRequestCancelled,
+    LLMResponse,
+    LLMStreamInterrupted,
+    ModelType,
+)
+from integrations.llm_cli.agent_exec import _terminate
+from integrations.llm_cli.base import CLIInvocation, CLIProbe, CLIStreamDecoder, LLMCLIAdapter
 from integrations.llm_cli.constants import (
     EX_TEMPFAIL as _EX_TEMPFAIL,
 )
@@ -106,11 +115,16 @@ class CLIBackedLLMClient:
         model: str | None = None,
         max_tokens: int = 1024,
         model_type: str = "reasoning",
+        usage_callback: Callable[..., object] | None = None,
     ) -> None:
         self._adapter = adapter
         self._model = model
         self._max_tokens = max_tokens
         self._model_type = model_type
+        self._usage_callback = usage_callback or emit_usage
+        self._decoder_factory: Callable[[], CLIStreamDecoder] | None = getattr(
+            type(adapter), "stream_decoder_factory", None
+        )
         self._cached_probe: CLIProbe | None = None
         self._probe_cached_at: float = 0.0
         self._probe_lock = threading.Lock()
@@ -132,6 +146,14 @@ class CLIBackedLLMClient:
             return probe
 
     def with_config(self, **_kwargs: Any) -> CLIBackedLLMClient:
+        if "usage_callback" in _kwargs:
+            return CLIBackedLLMClient(
+                self._adapter,
+                model=self._model,
+                max_tokens=self._max_tokens,
+                model_type=self._model_type,
+                usage_callback=_kwargs["usage_callback"],
+            )
         return self
 
     def with_structured_output(self, model: type[BaseModel]) -> Any:
@@ -270,6 +292,8 @@ class CLIBackedLLMClient:
         return LLMResponse(content=content)
 
     def invoke(self, prompt_or_messages: Any) -> LLMResponse:
+        if self._decoder_factory is not None:
+            return self.invoke_cancellable(prompt_or_messages)
         prepared = self._prepare_invocation(prompt_or_messages)
         invocation = prepared.invocation
 
@@ -322,8 +346,11 @@ class CLIBackedLLMClient:
         invocation: CLIInvocation,
         *,
         merged_env: dict[str, str],
+        should_stop: CancelProbe | None = None,
     ) -> Generator[str, None, _StreamedProcessResult]:
         proc: subprocess.Popen[str] | None = None
+        if should_stop and should_stop():
+            raise LLMRequestCancelled("CLI request cancelled before invocation.")
         try:
             proc = subprocess.Popen(
                 list(invocation.argv),
@@ -335,6 +362,7 @@ class CLIBackedLLMClient:
                 errors="replace",
                 cwd=invocation.cwd,
                 env=merged_env,
+                start_new_session=True,
             )
         except OSError as exc:
             raise RuntimeError(f"Failed to spawn {self._adapter.name} CLI: {exc}") from exc
@@ -350,10 +378,11 @@ class CLIBackedLLMClient:
             try:
                 stdin.write(invocation.stdin)
                 stdin.flush()
-            except BrokenPipeError:
+            except (OSError, ValueError):
                 return
             finally:
-                stdin.close()
+                with suppress(OSError, ValueError):
+                    stdin.close()
 
         def _read_stdout() -> None:
             stream = proc.stdout
@@ -407,9 +436,10 @@ class CLIBackedLLMClient:
         stdout_done = False
         try:
             while not stdout_done or proc.poll() is None:
+                if should_stop and should_stop():
+                    raise LLMRequestCancelled("CLI request cancelled by the caller.")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    proc.kill()
                     raise CLITimeoutError(
                         f"{self._adapter.name} CLI timed out after {invocation.timeout_sec:.0f}s."
                     )
@@ -424,11 +454,13 @@ class CLIBackedLLMClient:
                     continue
                 emitted = True
                 yield item
+                if should_stop and should_stop():
+                    raise LLMRequestCancelled("CLI request cancelled by the caller.")
             returncode = proc.wait(timeout=max(deadline - time.monotonic(), 0.0))
         finally:
             if proc.poll() is None:
-                proc.kill()
-                proc.wait()
+                _terminate(proc)
+                proc.wait(timeout=3)
             stdin_thread.join(timeout=0.1)
             stdout_thread.join(timeout=0.1)
             stderr_thread.join(timeout=0.1)
@@ -440,14 +472,92 @@ class CLIBackedLLMClient:
             emitted=emitted,
         )
 
+    def _decoded_stream(
+        self,
+        prepared: _PreparedInvocation,
+        *,
+        should_stop: CancelProbe | None = None,
+    ) -> Generator[str, None, LLMResponse]:
+        factory = self._decoder_factory
+        if factory is None:
+            raise RuntimeError("CLI adapter has no structured stream decoder.")
+        decoder = factory()
+        events = self._run_plain_stdout_stream(
+            prepared.invocation,
+            merged_env=prepared.merged_env,
+            should_stop=should_stop,
+        )
+        delivered: list[str] = []
+        try:
+            with closing(events):
+                while True:
+                    try:
+                        chunk = next(events)
+                    except StopIteration as stopped:
+                        completed = stopped.value
+                        break
+                    for text in decoder.feed(chunk):
+                        delivered.append(text)
+                        yield text
+            if completed.returncode != 0:
+                self._response_from_completed_process(
+                    returncode=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    auth_probe_unclear=prepared.auth_probe_unclear,
+                    auth_probe_detail=prepared.auth_probe_detail,
+                )
+            response = decoder.finish()
+            if not delivered:
+                yield response.content
+            self._usage_callback(
+                self._model or self._adapter.name, response.input_tokens, response.output_tokens
+            )
+            return response
+        except LLMRequestCancelled:
+            raise
+        except Exception as exc:
+            if delivered:
+                raise LLMStreamInterrupted(
+                    "CLI response failed after output began.", partial_text="".join(delivered)
+                ) from exc
+            raise
+
+    def invoke_cancellable(
+        self,
+        prompt_or_messages: Any,
+        *,
+        should_stop: CancelProbe | None = None,
+    ) -> LLMResponse:
+        """Consume a structured CLI result while polling cancellation during stdout waits."""
+        if should_stop and should_stop():
+            raise LLMRequestCancelled("CLI request cancelled before invocation.")
+        if self._decoder_factory is None:
+            return self.invoke(prompt_or_messages)
+        events = self._decoded_stream(
+            self._prepare_invocation(prompt_or_messages), should_stop=should_stop
+        )
+        with closing(events):
+            while True:
+                try:
+                    next(events)
+                except StopIteration as stopped:
+                    return cast(LLMResponse, stopped.value)
+
     def invoke_stream(self, prompt_or_messages: Any) -> Iterator[str]:
         """Yield response chunks as the backing CLI emits plain stdout.
 
         Adapters opt in with ``streams_plain_stdout = True`` when stdout is the
-        final answer text. Structured-output adapters stay on the buffered
-        ``invoke`` path so JSON envelopes or status records are parsed before
-        anything reaches the terminal.
+        final answer text. Structured adapters may provide a per-invocation
+        decoder; envelopes and status records never reach the terminal. Other
+        structured adapters keep their buffered parsing path.
         """
+        if self._decoder_factory is not None:
+            with closing(
+                self._decoded_stream(self._prepare_invocation(prompt_or_messages))
+            ) as events:
+                yield from events
+            return
         if getattr(self._adapter, "streams_plain_stdout", False) is not True:
             yield self.invoke(prompt_or_messages).content
             return

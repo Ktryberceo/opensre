@@ -127,6 +127,7 @@ LLMProvider = Literal[
     "codex",
     "cursor",
     "claude-code",
+    "claude-code-subscription",
     "gemini-cli",
     "antigravity-cli",
     "opencode",

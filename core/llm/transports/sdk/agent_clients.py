@@ -1276,7 +1276,13 @@ class CLIBackedAgentClient:
         instruction = self._TOOL_CALL_INSTRUCTION + tool_block
         prompt = f"{system_block}{instruction}\n\n{flatten_cli_messages_to_prompt(messages)}"
 
-        text = self._cli_client.invoke(prompt).content.strip()
+        invoke_cancellable = getattr(self._cli_client, "invoke_cancellable", None)
+        response = (
+            invoke_cancellable(prompt, should_stop=should_stop)
+            if callable(invoke_cancellable)
+            else self._cli_client.invoke(prompt)
+        )
+        text = response.content.strip()
 
         # Try to parse a JSON tool call response.
         tool_calls: list[ToolCall] = []
@@ -1306,6 +1312,10 @@ class CLIBackedAgentClient:
             tool_calls=tool_calls,
             stop_reason="tool_use" if tool_calls else "end_turn",
             raw_content=None,  # None so _build_assistant_msg falls through to build_assistant_message
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_read_tokens=response.cache_read_tokens,
+            cache_creation_tokens=response.cache_creation_tokens,
         )
 
     @staticmethod

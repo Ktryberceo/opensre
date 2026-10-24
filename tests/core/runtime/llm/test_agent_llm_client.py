@@ -1499,11 +1499,12 @@ def test_try_parse_tool_call_json_recovers_when_unfenced_preamble_precedes_json(
 
 def test_cli_backed_agent_client_accepts_plain_text_as_final_answer() -> None:
     from core.llm.transports.sdk.agent_clients import CLIBackedAgentClient
+    from core.llm.types import LLMResponse
 
     class _FakeCLI:
         def invoke(self, prompt: str) -> object:
             _ = prompt
-            return type("Response", (), {"content": "Direct answer"})()
+            return LLMResponse(content="Direct answer")
 
     client = CLIBackedAgentClient.__new__(CLIBackedAgentClient)
     client._cli_client = _FakeCLI()
@@ -1515,19 +1516,14 @@ def test_cli_backed_agent_client_accepts_plain_text_as_final_answer() -> None:
 
 def test_cli_backed_agent_client_parses_tool_json() -> None:
     from core.llm.transports.sdk.agent_clients import CLIBackedAgentClient
+    from core.llm.types import LLMResponse
 
     class _FakeCLI:
         def invoke(self, prompt: str) -> object:
             _ = prompt
-            return type(
-                "Response",
-                (),
-                {
-                    "content": (
-                        '{"tool_calls": [{"id": "c1", "name": "my_tool", "input": {"x": 1}}]}'
-                    )
-                },
-            )()
+            return LLMResponse(
+                content='{"tool_calls": [{"id": "c1", "name": "my_tool", "input": {"x": 1}}]}'
+            )
 
     client = CLIBackedAgentClient.__new__(CLIBackedAgentClient)
     client._cli_client = _FakeCLI()

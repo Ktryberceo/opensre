@@ -6,8 +6,10 @@ from integrations.llm_cli.binary_resolver import npm_prefix_bin_dirs
 
 
 @pytest.fixture(autouse=True)
-def clear_npm_prefix_bin_dirs_cache() -> None:
+def clear_npm_prefix_bin_dirs_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent env/platform cache leakage across llm_cli tests."""
+    monkeypatch.delenv("NPM_CONFIG_PREFIX", raising=False)
+    monkeypatch.delenv("npm_config_prefix", raising=False)
     npm_prefix_bin_dirs.cache_clear()
     yield
     npm_prefix_bin_dirs.cache_clear()

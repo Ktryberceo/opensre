@@ -7,6 +7,11 @@ from config.package_exports import bind_package_exports
 # Re-exported name -> leaf module. Importing this package must not load
 # those modules; ``__getattr__`` loads one leaf the first time a name is used.
 EXPORTS: dict[str, str] = {
+    "CLAUDE_SUBSCRIPTION_PROVIDER": "claude_code",
+    "CLAUDE_SUBSCRIPTION_BIN_ENV": "claude_code",
+    "CLAUDE_SUBSCRIPTION_MODEL_ENV": "claude_code",
+    "CLAUDE_SUBSCRIPTION_MODELS": "claude_code",
+    "CLAUDE_SUBSCRIPTION_CONFLICT_ENVS": "claude_code",
     "GROK_OAUTH_CLIENT_ID": "grok",
     "GROK_OAUTH_REFERRER": "grok",
     "GROK_OAUTH_CLIENT_ID_ENV": "grok",

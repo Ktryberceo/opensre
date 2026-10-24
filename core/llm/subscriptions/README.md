@@ -19,6 +19,19 @@ Setup dispatches by provider identity. Runtime construction, readiness, and cach
 use the existing provider catalog; a catalog-only entry fails without an adapter.
 Clients resolve the active account on each request. Tokens never enter cache keys.
 
+## CLI-owned subscriptions
+
+The `transport` field selects `cli` for a vendor-owned application. Its auth adapter
+returns `CLISubscriptionAuth`, which contains no token. The integration composition
+root installs the typed registration with `register_subscription_adapter`; core clients
+use the existing CLI runtime port and never import an integration implementation.
+
+Claude Code owns its native login, account selection, renewal, and logout. Its subscription
+connection requires structured CLI authentication and refuses ambiguous/API/cloud routes.
+The ordinary Claude Code connection remains unchanged. A per-invocation stream decoder
+requires a successful terminal result, retains token usage, and excludes envelopes and
+status records from live text. The CLI's account-level extra-usage settings still apply.
+
 ## Adding a provider
 
 1. Confirm the supported onboarding/client registration, eligible plans/workloads,

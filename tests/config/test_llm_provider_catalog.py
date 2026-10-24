@@ -22,7 +22,11 @@ def test_wizard_provider_options_match_catalog() -> None:
 
 
 def test_cli_registry_matches_catalog_cli_providers() -> None:
-    cli_values = {spec.value for spec in PROVIDER_SPECS if spec.credential_kind == "cli"}
+    cli_values = {
+        spec.value
+        for spec in PROVIDER_SPECS
+        if spec.credential_kind == "cli" or spec.cli_model_env is not None
+    }
 
     assert set(CLI_PROVIDER_REGISTRY) == cli_values
 

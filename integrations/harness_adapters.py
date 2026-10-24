@@ -312,6 +312,21 @@ def _register_cli_llm_adapters() -> None:
             kwargs["model_type"] = model_type
         return CLIBackedLLMClient(adapter, **kwargs)
 
+    from config.constants.claude_code import CLAUDE_SUBSCRIPTION_PROVIDER
+    from core.llm.subscriptions.cli_clients import CLISubscriptionClients
+    from core.llm.subscriptions.registry import (
+        SubscriptionRegistration,
+        register_subscription_adapter,
+    )
+    from integrations.llm_cli import claude_subscription
+
+    register_subscription_adapter(
+        CLAUDE_SUBSCRIPTION_PROVIDER,
+        SubscriptionRegistration(
+            claude_subscription, CLISubscriptionClients(CLAUDE_SUBSCRIPTION_PROVIDER)
+        ),
+    )
+
     CliLlmAdapters(
         cli_provider_registration=get_cli_provider_registration,
         build_cli_client=_build_cli_client,

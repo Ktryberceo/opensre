@@ -1,4 +1,4 @@
-"""Browser subscription setup within the onboarding wizard."""
+"""Subscription connection setup within the onboarding wizard."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from surfaces.shared.llm_setup.subscription_service import configure_subscriptio
 
 
 def configure_subscription_wizard(provider: ProviderOption) -> str | None:
-    """Complete browser authorization before the wizard persists its provider choice."""
+    """Confirm authorization before the wizard persists its provider choice."""
     try:
         result = configure_subscription(
             profile=resolve_auth_profile(provider.value),

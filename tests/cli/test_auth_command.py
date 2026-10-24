@@ -27,7 +27,11 @@ def test_login_uses_readable_auth_selectors(monkeypatch) -> None:
     assert [label for _, label in seen[0]["choices"]] == ["API key", "Subscriptions"]
     assert seen[0]["initial_value"] == "subscriptions"
     assert seen[1]["initial_value"] == "chatgpt"
-    assert [name for name, _ in seen[1]["choices"]] == ["chatgpt", "grok"]
+    assert [name for name, _ in seen[1]["choices"]] == [
+        "claude-code-subscription",
+        "chatgpt",
+        "grok",
+    ]
 
 
 def test_subscription_model_selector_can_cancel(monkeypatch) -> None:

@@ -76,7 +76,12 @@ def verify_subscription(profile: ProviderAuthProfile) -> AuthStatus:
             else f"{profile.label} verification failed. Check connectivity and run login again if needed."
         )
         raise AuthSetupError(detail) from exc
-    detail = f"{profile.label} credentials accepted; {len(models)} models available. Inference remains subject to plan limits."
+    spec = SUBSCRIPTION_BY_VALUE[provider]
+    detail = (
+        f"{profile.label} login confirmed. Model access and subscription limits are checked by the vendor CLI."
+        if spec.transport == "cli"
+        else f"{profile.label} credentials accepted; {len(models)} models available. Inference remains subject to plan limits."
+    )
     record = resolve_provider_auth_record(provider)
     save_provider_auth_record_values(provider, {**record, "verified": "true", "stale": "false"})
     return AuthStatus(provider, profile.label, True, "subscription", detail, verified=True)

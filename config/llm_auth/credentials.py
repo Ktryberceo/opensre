@@ -220,6 +220,19 @@ def status(provider: str) -> CredentialStatus:
         )
 
     if spec.credential_kind == "subscription":
+        from config.llm_auth.subscriptions import SUBSCRIPTION_BY_VALUE
+
+        if SUBSCRIPTION_BY_VALUE[spec.value].transport == "cli":
+            cli = resolve_cli_auth_state(spec.value)
+            configured = cli is not None and cli.installed and cli.logged_in is True
+            return CredentialStatus(
+                spec.value,
+                configured,
+                CredentialSource.SUBSCRIPTION if configured else CredentialSource.NONE,
+                configured,
+                False,
+                cli.detail if cli is not None else "CLI subscription backend is not installed.",
+            )
         record = resolve_provider_auth_record(spec.value)
         from config.secrets.store import keyring_is_disabled
 

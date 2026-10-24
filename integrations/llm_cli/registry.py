@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from config.constants.claude_code import CLAUDE_SUBSCRIPTION_MODEL_ENV, CLAUDE_SUBSCRIPTION_PROVIDER
 from config.llm_auth.provider_catalog import require_provider_spec
 from integrations.llm_cli.base import LLMCLIAdapter
 
@@ -78,7 +79,17 @@ def _pi_factory() -> LLMCLIAdapter:
     return PiAdapter()
 
 
+def _claude_subscription_factory() -> LLMCLIAdapter:
+    from integrations.llm_cli.claude_subscription import ClaudeCodeSubscriptionAdapter
+
+    return ClaudeCodeSubscriptionAdapter()
+
+
 CLI_PROVIDER_REGISTRY: dict[str, CLIProviderRegistration] = {
+    CLAUDE_SUBSCRIPTION_PROVIDER: CLIProviderRegistration(
+        adapter_factory=_claude_subscription_factory,
+        model_env_key=CLAUDE_SUBSCRIPTION_MODEL_ENV,
+    ),
     "codex": CLIProviderRegistration(
         adapter_factory=_codex_factory,
         model_env_key=require_provider_spec("codex").cli_model_env or "CODEX_MODEL",

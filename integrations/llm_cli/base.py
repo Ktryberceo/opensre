@@ -5,6 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from core.llm.types import LLMResponse
+
+
+class CLIStreamDecoder(Protocol):
+    """One invocation's vendor-owned structured stdout decoder."""
+
+    def feed(self, chunk: str) -> list[str]:
+        """Consume stdout and return only user-visible text deltas."""
+
+    def finish(self) -> LLMResponse:
+        """Require a complete successful terminal result and return its response/usage."""
+
 
 @dataclass(frozen=True)
 class CLIProbe:
