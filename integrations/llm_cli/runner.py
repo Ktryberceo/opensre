@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import re
 import subprocess
@@ -367,6 +368,7 @@ class CLIBackedLLMClient:
         except OSError as exc:
             raise RuntimeError(f"Failed to spawn {self._adapter.name} CLI: {exc}") from exc
 
+        group_id = proc.pid if hasattr(os, "killpg") else None
         stdout_chunks: list[str] = []
         stderr_chunks: list[str] = []
         stdout_queue: queue.Queue[str | None] = queue.Queue()
@@ -458,9 +460,7 @@ class CLIBackedLLMClient:
                     raise LLMRequestCancelled("CLI request cancelled by the caller.")
             returncode = proc.wait(timeout=max(deadline - time.monotonic(), 0.0))
         finally:
-            if proc.poll() is None:
-                _terminate(proc)
-                proc.wait(timeout=3)
+            _terminate(proc, group_id=group_id)
             stdin_thread.join(timeout=0.1)
             stdout_thread.join(timeout=0.1)
             stderr_thread.join(timeout=0.1)

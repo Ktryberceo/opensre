@@ -1,5 +1,6 @@
 """Claude subscription billing and native CLI stream contract."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -281,3 +282,71 @@ def test_tools_use_completed_model_json_and_replay_results(wire):
     client.invoke([client.build_assistant_message(result.content, result.tool_calls), replay])
     assert "healthy" in wire["invocations"][-1].stdin
     assert (result.input_tokens, result.output_tokens) == (12, 8)
+
+
+def test_probe_timeout_preserves_unknown_auth_and_never_invokes(wire, monkeypatch):
+    import subprocess
+
+    from core.llm.subscriptions.types import SubscriptionLoginRequired
+    from integrations.llm_cli import claude_subscription
+    from integrations.llm_cli.runner import CLIBackedLLMClient
+
+    def timeout(argv, **_kwargs):
+        raise subprocess.TimeoutExpired(argv, 8)
+
+    monkeypatch.setattr(claude_subscription.subprocess, "run", timeout)
+    adapter = wire["adapter"]()
+    probe = adapter.detect()
+    assert probe.installed and probe.logged_in is None
+    with pytest.raises(SubscriptionLoginRequired, match="could not be confirmed"):
+        CLIBackedLLMClient(adapter).invoke("hello")
+    assert wire["invocations"] == []
+
+
+@pytest.mark.skipif(not hasattr(os, "killpg"), reason="POSIX process-group regression")
+def test_stream_close_stops_sigterm_resistant_descendant_after_leader_exits(wire):
+    import contextlib
+    import json
+    import signal
+    import sys
+    import time
+
+    import psutil
+
+    from integrations.llm_cli.runner import CLIBackedLLMClient
+
+    child_pid_file = wire["pid"].with_name("child-pid")
+    child_script = (
+        "import os,signal,time\nfrom pathlib import Path\n"
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+        f"Path({str(child_pid_file)!r}).write_text(str(os.getpid()))\n"
+        "while True: time.sleep(0.02)\n"
+    )
+    delta = json.dumps(
+        {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "ready"}}}
+    )
+    wire["script"].write_text(
+        "import subprocess,sys,time\nfrom pathlib import Path\nsys.stdin.read()\n"
+        f"subprocess.Popen([{sys.executable!r}, '-c', {child_script!r}])\n"
+        f"while not Path({str(child_pid_file)!r}).exists(): time.sleep(0.01)\n"
+        f"print({delta!r},flush=True)\n"
+        "while True: time.sleep(0.02)\n"
+    )
+    stream = CLIBackedLLMClient(wire["adapter"]()).invoke_stream("hello")
+    assert next(stream) == "ready"
+    child_pid = int(child_pid_file.read_text())
+    try:
+        stream.close()
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                state = psutil.Process(child_pid).status()
+            except psutil.NoSuchProcess:
+                state = None
+            if state in (None, psutil.STATUS_ZOMBIE) or time.monotonic() >= deadline:
+                break
+            time.sleep(0.01)
+        assert state in (None, psutil.STATUS_ZOMBIE), f"descendant still executing: {state}"
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(child_pid, signal.SIGKILL)

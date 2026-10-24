@@ -147,7 +147,9 @@ def build_guarded_task_prompt(
     )
 
 
-def _signal_process_group(proc: subprocess.Popen[str], *, forceful: bool) -> None:
+def _signal_process_group(
+    proc: subprocess.Popen[str], *, forceful: bool, group_id: int | None = None
+) -> None:
     """Signal the child's process group when available, else the child alone.
 
     Coding-agent CLIs often spawn tests/linters/sandboxes. With
@@ -157,14 +159,17 @@ def _signal_process_group(proc: subprocess.Popen[str], *, forceful: bool) -> Non
     single-process API on platforms that lack it (and that may also lack
     ``signal.SIGKILL``).
     """
-    if proc.poll() is not None:
+    if group_id is None and proc.poll() is not None:
         return
     # getattr: test doubles may omit ``pid``; None steers us to terminate/kill.
     pid = getattr(proc, "pid", None)
-    if pid is not None and hasattr(os, "killpg"):
+    if group_id is None and isinstance(pid, int) and hasattr(os, "killpg"):
+        with contextlib.suppress(ProcessLookupError):
+            group_id = os.getpgid(pid)
+    if group_id is not None and hasattr(os, "killpg"):
         sig = signal.SIGKILL if forceful else signal.SIGTERM
-        with contextlib.suppress(Exception):
-            os.killpg(os.getpgid(pid), sig)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(group_id, sig)
             return
     with contextlib.suppress(Exception):
         if forceful:
@@ -173,13 +178,20 @@ def _signal_process_group(proc: subprocess.Popen[str], *, forceful: bool) -> Non
             proc.terminate()
 
 
-def _terminate(proc: subprocess.Popen[str]) -> None:
-    """Stop a still-running child (and descendants): SIGTERM, then SIGKILL."""
-    _signal_process_group(proc, forceful=False)
-    try:
+def _terminate(proc: subprocess.Popen[str], *, group_id: int | None = None) -> None:
+    """Stop the owned group even when its leader exits before resistant descendants."""
+    if group_id is None and hasattr(os, "killpg"):
+        pid = getattr(proc, "pid", None)
+        if isinstance(pid, int):
+            with contextlib.suppress(ProcessLookupError):
+                group_id = os.getpgid(pid)
+    _signal_process_group(proc, forceful=False, group_id=group_id)
+    with contextlib.suppress(subprocess.TimeoutExpired):
         proc.wait(timeout=_TERMINATE_GRACE_SEC)
-    except subprocess.TimeoutExpired:
-        _signal_process_group(proc, forceful=True)
+    # Group identity survives its leader. Always escalate that group, not only a
+    # still-running leader, so children cannot retain pipes or continue work.
+    _signal_process_group(proc, forceful=True, group_id=group_id)
+    proc.wait(timeout=_TERMINATE_GRACE_SEC)
 
 
 def _drain(

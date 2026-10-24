@@ -27,6 +27,10 @@ from integrations.llm_cli.claude_subscription_stream import ClaudeSubscriptionSt
 from integrations.llm_cli.subprocess_env import build_cli_subprocess_env
 
 
+class _SubscriptionStatusUnknown(SubscriptionLoginRequired):
+    """The CLI probe failed; authentication remains unknown, never an API fallback."""
+
+
 def _binary() -> str:
     binary = resolve_cli_binary(
         explicit_env_key=CLAUDE_SUBSCRIPTION_BIN_ENV,
@@ -64,7 +68,7 @@ def resolve() -> CLISubscriptionAuth:
         )
         data: Any = json.loads(proc.stdout)
     except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
-        raise SubscriptionLoginRequired(
+        raise _SubscriptionStatusUnknown(
             "Claude Code subscription status could not be confirmed. Run `claude auth status` and retry."
         ) from exc
     if (
@@ -155,7 +159,8 @@ class ClaudeCodeSubscriptionAdapter(ClaudeCodeAdapter):
                 binary = _binary()
             except RuntimeError:
                 binary = None
-            return CLIProbe(bool(binary), None, False, binary, str(exc))
+            logged_in = None if isinstance(exc, _SubscriptionStatusUnknown) or not binary else False
+            return CLIProbe(bool(binary), None, logged_in, binary, str(exc))
 
     def _resolve_binary(self) -> str:
         return _binary()
