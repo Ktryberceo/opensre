@@ -476,8 +476,10 @@ class CLIBackedLLMClient:
         self,
         prepared: _PreparedInvocation,
         *,
+        streaming: bool,
         should_stop: CancelProbe | None = None,
     ) -> Generator[str, None, LLMResponse]:
+        """Decode records; only exposed output may become a recoverable interruption."""
         factory = self._decoder_factory
         if factory is None:
             raise RuntimeError("CLI adapter has no structured stream decoder.")
@@ -517,7 +519,7 @@ class CLIBackedLLMClient:
         except LLMRequestCancelled:
             raise
         except Exception as exc:
-            if delivered:
+            if streaming and delivered:
                 raise LLMStreamInterrupted(
                     "CLI response failed after output began.", partial_text="".join(delivered)
                 ) from exc
@@ -535,7 +537,7 @@ class CLIBackedLLMClient:
         if self._decoder_factory is None:
             return self.invoke(prompt_or_messages)
         events = self._decoded_stream(
-            self._prepare_invocation(prompt_or_messages), should_stop=should_stop
+            self._prepare_invocation(prompt_or_messages), streaming=False, should_stop=should_stop
         )
         with closing(events):
             while True:
@@ -554,7 +556,7 @@ class CLIBackedLLMClient:
         """
         if self._decoder_factory is not None:
             with closing(
-                self._decoded_stream(self._prepare_invocation(prompt_or_messages))
+                self._decoded_stream(self._prepare_invocation(prompt_or_messages), streaming=True)
             ) as events:
                 yield from events
             return

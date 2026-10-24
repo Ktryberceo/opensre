@@ -181,15 +181,15 @@ def test_subscription_cannot_silently_change_billing_after_cached_probe(
 
 
 @pytest.mark.parametrize("failure", ["missing", "error_result", "quota", "invalid"])
-def test_partial_stream_never_becomes_success_or_retries(wire, failure):
+@pytest.mark.parametrize("delivery", ["stream", "buffered", "agent"])
+def test_partial_stream_never_becomes_success_or_retries(wire, failure, delivery):
     import json
 
     from core.llm.types import LLMStreamInterrupted
     from integrations.llm_cli.runner import CLIBackedLLMClient
 
-    events = [
-        {"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": "partial"}}}
-    ]
+    partial = '{"tool_calls":[{"name":"lookup","input":'
+    events = [{"type": "stream_event", "event": {"delta": {"type": "text_delta", "text": partial}}}]
     if failure == "error_result":
         events.append(
             {
@@ -208,11 +208,21 @@ def test_partial_stream_never_becomes_success_or_retries(wire, failure):
         "import sys\nsys.stdin.read()\n" + f"print({payload!r},end='',flush=True)\n"
     )
     client = CLIBackedLLMClient(wire["adapter"]())
-    stream = client.invoke_stream("hello")
-    assert next(stream) == "partial"
-    with pytest.raises(LLMStreamInterrupted) as error:
-        list(stream)
-    assert error.value.partial_text == "partial"
+    if delivery == "stream":
+        stream = client.invoke_stream("hello")
+        assert next(stream) == partial
+        with pytest.raises(LLMStreamInterrupted) as error:
+            list(stream)
+        assert error.value.partial_text == partial
+    else:
+        if delivery == "agent":
+            from core.llm.transports.sdk.agent_clients import CLIBackedAgentClient
+
+            client = CLIBackedAgentClient(wire["adapter"]())
+        with pytest.raises(RuntimeError) as error:
+            client.invoke("hello")
+        assert not isinstance(error.value, LLMStreamInterrupted)
+        assert not getattr(error.value, "partial_text", None)
     assert len(wire["invocations"]) == 1
 
 
