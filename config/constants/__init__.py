@@ -337,10 +337,16 @@ if TYPE_CHECKING:
     from config.constants.ci_repair import CI_REPAIR_SECONDS as CI_REPAIR_SECONDS
     from config.constants.ci_repair import CI_REPAIR_WORKER_COMMAND as CI_REPAIR_WORKER_COMMAND
     from config.constants.claude_code import (
+        CLAUDE_CODE_EFFORT_LEVEL_ENV as CLAUDE_CODE_EFFORT_LEVEL_ENV,
+    )
+    from config.constants.claude_code import (
         CLAUDE_SUBSCRIPTION_BIN_ENV as CLAUDE_SUBSCRIPTION_BIN_ENV,
     )
     from config.constants.claude_code import (
         CLAUDE_SUBSCRIPTION_CONFLICT_ENVS as CLAUDE_SUBSCRIPTION_CONFLICT_ENVS,
+    )
+    from config.constants.claude_code import (
+        CLAUDE_SUBSCRIPTION_DEFAULT_EFFORT as CLAUDE_SUBSCRIPTION_DEFAULT_EFFORT,
     )
     from config.constants.claude_code import (
         CLAUDE_SUBSCRIPTION_MODEL_ENV as CLAUDE_SUBSCRIPTION_MODEL_ENV,

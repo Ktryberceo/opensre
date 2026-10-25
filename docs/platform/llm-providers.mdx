@@ -49,7 +49,7 @@ Each provider has two model roles:
 
 | Provider | Setup | Model selection |
 | --- | --- | --- |
-| Claude subscription (via Claude Code) | `claude auth login`, then `opensre auth login claude-code-subscription` | CLI aliases: `sonnet` (default), `opus`, `haiku` |
+| Claude subscription (via Claude Code) | `opensre auth login claude-code-subscription` (reuses CLI sign-in or starts it) | CLI aliases: `sonnet` (default), `opus`, `haiku` |
 | ChatGPT | `opensre auth login chatgpt` | Models available to the signed-in account; `CHATGPT_MODEL` records the selected model |
 | Grok subscription (local testing) | `opensre auth login grok` | Browser login; no client-ID setup; `GROK_MODEL` records the selected account model |
 
@@ -205,17 +205,23 @@ opensre auth status
 
 ## Claude subscription through Claude Code
 
-Install the official, unmodified Claude Code CLI, then sign in using your own eligible
-Claude subscription through its native flow:
+Install the official, unmodified Claude Code CLI, then connect your own eligible
+Claude subscription:
 
 ```bash
-claude auth login
 opensre auth login claude-code-subscription
 ```
 
-The subscription picker also offers **Claude subscription (via Claude Code)**.
-OpenSRE connects an existing CLI login; if login is missing, complete `claude auth login`
-and retry. All authentication methods remain available in the official CLI and the
+The `/login` subscription picker also offers **Claude subscription (via Claude Code)**.
+OpenSRE reuses an existing subscription session without signing in again. If Claude Code
+reports that you are signed out, OpenSRE runs `claude auth login --claudeai` in your
+terminal, then verifies the session before saving the provider and model. Complete the
+CLI's browser/code prompts within five minutes, or press Ctrl+C to cancel; failed or
+cancelled login does not change your OpenSRE provider settings. Claude Code controls
+browser opening for this flow, independently of OpenSRE's `--no-open-browser` option.
+Unclear status or conflicting API/cloud authentication stops setup without starting a
+new login. You can also sign in beforehand with `claude auth login`.
+All authentication methods remain available in the official CLI and the
 ordinary `claude-code` connection remains available for API/cloud configurations.
 
 The required binary is `claude` on `PATH`. Optional `CLAUDE_CODE_SUBSCRIPTION_BIN`
@@ -223,6 +229,22 @@ selects its installed path. Optional `--model sonnet|opus|haiku` selects a docum
 CLI alias; `sonnet` is the default. The non-secret choice is persisted as
 `CLAUDE_CODE_SUBSCRIPTION_MODEL`. Claude Code checks actual model access when invoked;
 these aliases are not an account-entitlement discovery endpoint.
+
+The shell footer shows the selected model until a successful response reports its
+exact model ID. Reported model details are scoped to the current session and selection.
+OpenSRE defaults this connection to **high** reasoning effort and displays it in
+parentheses immediately, before any model response. `/effort low|medium|high|xhigh|max`
+changes the current session's preference; `OPENSRE_REASONING_EFFORT` sets a
+non-interactive default (`low`, `medium`, `high`, or `xhigh`). Session choices take
+precedence over that environment variable, then the built-in `high` default.
+OpenSRE's `max` choice retains its existing meaning of `xhigh`.
+
+Each invocation passes the resolved value with `--effort`, including tool-calling
+requests. OpenSRE also sets the child's `CLAUDE_CODE_EFFORT_LEVEL` to the same value
+so an inherited Claude-specific override cannot change what the footer shows.
+The parent environment and Claude Code's saved settings are not modified. Claude Code
+enforces model-specific supported levels and organization policies; rejected levels
+surface as errors without an API-billing fallback.
 
 Setup selects `LLM_PROVIDER=claude-code-subscription` and
 `OPENSRE_LLM_CONNECTION=local`, preserving your OpenSRE account identity.
@@ -984,8 +1006,9 @@ for how to add new CLI providers.
 
 In the interactive shell (`opensre` with no subcommand), `/effort` sets a
 **session** preference for how hard reasoning models should think before
-answering. It applies only when `LLM_PROVIDER` is **`openai`** (HTTP API) or
-**`codex`** (Codex CLI). Other providers ignore it, and the shell tells you so.
+answering. It applies when `LLM_PROVIDER` is **`openai`** (HTTP API),
+**`codex`** (Codex CLI), or **`claude-code-subscription`** (Claude Code CLI).
+Other providers ignore it, and the shell tells you so.
 
 | Input | Sent to the model |
 | --- | --- |
@@ -1003,6 +1026,9 @@ export OPENSRE_REASONING_EFFORT=high   # low | medium | high | xhigh
 ```
 
 On the native OpenAI SDK and Codex, GPT-6.1 Sol sends `xhigh` (extra high) when this variable and `/effort` are both unset. LiteLLM and OpenRouter do not add an effort value.
+
+Claude subscription defaults to `high` when neither is set. OpenSRE passes the
+resolved effort explicitly to Claude Code and shows the same value in the footer.
 
 Session `/effort` overrides this for interactive runs. Implementation:
 [`config/llm_reasoning_effort.py`](https://github.com/Tracer-Cloud/opensre/blob/main/config/llm_reasoning_effort.py).

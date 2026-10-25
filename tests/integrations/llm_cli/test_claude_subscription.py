@@ -19,6 +19,66 @@ def test_existing_claude_code_connection_keeps_explicit_api_auth(
     assert invocation.env and invocation.env["ANTHROPIC_API_KEY"] == "synthetic-api-key"
 
 
+def test_stream_retains_reported_model_and_effort_without_exposing_envelopes():
+    import json
+
+    from integrations.llm_cli.claude_subscription_stream import ClaudeSubscriptionStream
+
+    decoder = ClaudeSubscriptionStream()
+    assert (
+        decoder.feed(
+            json.dumps(
+                {"type": "system", "subtype": "init", "model": "claude-opus-4-7", "effort": "high"}
+            )
+            + "\n"
+        )
+        == []
+    )
+    decoder.feed(
+        json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "hello"})
+        + "\n"
+    )
+    response = decoder.finish()
+    assert response.content == "hello"
+    assert response.model == "claude-opus-4-7"
+    assert response.reasoning_effort == "high"
+
+
+@pytest.mark.parametrize(
+    "models, expected",
+    [
+        ({"claude-opus-4-7": {}}, "claude-opus-4-7"),
+        ({"claude-opus-4-7": {}, "claude-haiku-4-5": {}}, None),
+        ({}, None),
+    ],
+)
+def test_stream_does_not_guess_primary_model_or_effort(models, expected):
+    import json
+
+    from integrations.llm_cli.claude_subscription_stream import ClaudeSubscriptionStream
+
+    decoder = ClaudeSubscriptionStream()
+    decoder.feed(
+        json.dumps({"type": "system", "subtype": "init", "model": [], "effort": {"high": True}})
+        + "\n"
+    )
+    decoder.feed(
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "hello",
+                "modelUsage": models,
+            }
+        )
+        + "\n"
+    )
+    response = decoder.finish()
+    assert response.model == expected
+    assert response.reasoning_effort is None
+
+
 @pytest.fixture
 def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     import json
@@ -52,11 +112,18 @@ def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 
     def auth_command(argv, **_kwargs):
         state["commands"].append(argv)
+        if argv[1:] == ["auth", "login", "--claudeai"]:
+            assert not _kwargs.get("capture_output")
+            assert all(_kwargs.get(stream) is None for stream in ("stdin", "stdout", "stderr"))
+            state["auth"].update(loggedIn=True, authMethod="claude.ai")
+            return subprocess.CompletedProcess(argv, 0, "", "")
         if argv[1:] == ["auth", "logout"]:
             state["auth"]["loggedIn"] = False
             return subprocess.CompletedProcess(argv, 0, "", "")
         assert argv[1:] == ["auth", "status"]
-        return subprocess.CompletedProcess(argv, 0, json.dumps(state["auth"]), "")
+        return subprocess.CompletedProcess(
+            argv, 0 if state["auth"]["loggedIn"] else 1, json.dumps(state["auth"]), ""
+        )
 
     monkeypatch.setattr(claude_subscription.subprocess, "run", auth_command)
 
@@ -74,6 +141,95 @@ def wire(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
         "print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'hello', 'usage':{'input_tokens':11,'output_tokens':7,'cache_read_input_tokens':3}}), flush=True)\n"
     )
     return state
+
+
+@pytest.mark.parametrize("signed_in", [False, True])
+def test_login_picker_authorizes_only_when_signed_out(wire, monkeypatch, tmp_path, signed_in):
+    from click.testing import CliRunner
+
+    from surfaces.cli.app import cli
+    from surfaces.shared.llm_setup.auth_profiles import resolve_auth_profile
+
+    if not signed_in:
+        wire["auth"].update(loggedIn=False, authMethod="none")
+    monkeypatch.setattr(
+        "surfaces.cli.commands.auth.prompt_auth_provider",
+        lambda: resolve_auth_profile("claude-code-subscription"),
+    )
+    result = CliRunner().invoke(cli, ["auth", "login", "--model", "sonnet"])
+
+    assert result.exit_code == 0, result.output
+    commands = [command[1:] for command in wire["commands"]]
+    assert commands == (
+        [["auth", "status"]]
+        if signed_in
+        else [["auth", "status"], ["auth", "login", "--claudeai"], ["auth", "status"]]
+    )
+    env = (tmp_path / ".env").read_text()
+    assert "LLM_PROVIDER=claude-code-subscription" in env
+    assert "CLAUDE_CODE_SUBSCRIPTION_MODEL=sonnet" in env
+
+
+@pytest.mark.parametrize("outcome", ["failed", "timeout", "cancelled", "signed_out", "api"])
+def test_login_never_saves_provider_without_confirmed_subscription(
+    wire, monkeypatch, tmp_path, outcome
+):
+    import subprocess
+
+    from click.testing import CliRunner
+
+    from integrations.llm_cli import claude_subscription
+    from surfaces.cli.app import cli
+
+    wire["auth"].update(loggedIn=False, authMethod="none")
+    auth_command = claude_subscription.subprocess.run
+    login_commands = []
+
+    def run(argv, **kwargs):
+        if argv[1:] != ["auth", "login", "--claudeai"]:
+            return auth_command(argv, **kwargs)
+        login_commands.append(argv)
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+        if outcome == "cancelled":
+            raise KeyboardInterrupt
+        if outcome == "api":
+            wire["auth"].update(loggedIn=True, authMethod="api_key", apiKeySource="apiKeyHelper")
+        return subprocess.CompletedProcess(argv, 1 if outcome == "failed" else 0, "", "")
+
+    monkeypatch.setattr(claude_subscription.subprocess, "run", run)
+    result = CliRunner().invoke(
+        cli, ["auth", "login", "claude-code-subscription", "--model", "sonnet"]
+    )
+
+    assert len(login_commands) == 1
+    assert result.exit_code != 0
+    assert not (tmp_path / ".env").exists()
+
+
+@pytest.mark.parametrize("status", ["override", "api", "unknown", "timeout"])
+def test_login_does_not_replace_ambiguous_or_conflicting_auth(wire, monkeypatch, status):
+    import subprocess
+
+    from core.llm.subscriptions.types import SubscriptionLoginRequired
+    from integrations.llm_cli import claude_subscription
+
+    if status == "override":
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "synthetic-conflict")
+    elif status == "api":
+        wire["auth"].update(authMethod="api_key", apiKeySource="apiKeyHelper")
+    elif status == "unknown":
+        wire["auth"].pop("authMethod")
+    else:
+
+        def timeout(argv, **_kwargs):
+            raise subprocess.TimeoutExpired(argv, 8)
+
+        monkeypatch.setattr(claude_subscription.subprocess, "run", timeout)
+
+    with pytest.raises(SubscriptionLoginRequired):
+        claude_subscription.login(lambda _url: None, select_model=lambda models: models[0][0])
+    assert all(command[1:] == ["auth", "status"] for command in wire["commands"])
 
 
 def test_subscription_setup_and_runtime_use_cli_without_storing_tokens(wire, monkeypatch, tmp_path):
@@ -149,8 +305,75 @@ def test_subscription_setup_and_runtime_use_cli_without_storing_tokens(wire, mon
         "sonnet",
         "--verbose",
         "--include-partial-messages",
+        "--effort",
+        "high",
     )
     assert "--bare" not in invocation.argv
+
+
+def test_cli_runtime_reports_model_only_to_current_turn(wire):
+    import json
+
+    from core.llm.shared.model_runtime import collect_model_runtime
+    from integrations.llm_cli.runner import CLIBackedLLMClient
+
+    init = {"type": "system", "subtype": "init", "model": "claude-opus-4-7"}
+    original = wire["script"].read_text()
+    wire["script"].write_text(f"print({json.dumps(init)!r}, flush=True)\n" + original)
+    with collect_model_runtime() as snapshots:
+        client = CLIBackedLLMClient(wire["adapter"](), model="opus")
+        assert client.invoke("hello").model == "claude-opus-4-7"
+    assert len(snapshots) == 1
+    assert (snapshots[0].provider, snapshots[0].requested_model, snapshots[0].model) == (
+        "claude-code-subscription",
+        "opus",
+        "claude-opus-4-7",
+    )
+    assert snapshots[0].reasoning_effort is None
+    client.invoke("outside the turn")
+    assert len(snapshots) == 1
+
+
+@pytest.mark.parametrize(
+    "choice, env, expected",
+    [
+        (None, None, "high"),
+        (None, "low", "low"),
+        ("medium", "low", "medium"),
+        ("max", None, "xhigh"),
+    ],
+)
+def test_subscription_effort_matches_footer_and_cli_for_every_role(
+    wire, monkeypatch, choice, env, expected
+):
+    from config.llm_reasoning_effort import apply_reasoning_effort, parse_reasoning_effort
+    from core.llm.shared.model_runtime import ModelRuntimeSnapshot
+    from core.llm.types import ModelType
+    from integrations.llm_cli.runner import CLIBackedLLMClient
+    from surfaces.interactive_shell.session import Session
+    from surfaces.interactive_shell.ui.auto_status import auto_status_ansi
+
+    monkeypatch.delenv("OPENSRE_REASONING_EFFORT", raising=False)
+    if env:
+        monkeypatch.setenv("OPENSRE_REASONING_EFFORT", env)
+    monkeypatch.setenv("CLAUDE_CODE_EFFORT_LEVEL", "max")
+    session = Session()
+    session.terminal.provider_model = ("claude-code-subscription", "opus")
+    session.reasoning_effort = parse_reasoning_effort(choice)
+    # Last response metadata must not override the preference for the next call.
+    session.terminal.model_runtime = ModelRuntimeSnapshot(
+        "claude-code-subscription", "opus", "claude-opus-4-7", "low"
+    )
+    assert f"claude-opus-4-7 ({expected})" in auto_status_ansi(session, max_width=160)
+    with apply_reasoning_effort(session.reasoning_effort):
+        for role in (None, *ModelType):
+            client = CLIBackedLLMClient(wire["adapter"](), model="opus", model_type=role)
+            assert client.invoke("hello").content == "hello"
+    for invocation in wire["invocations"]:
+        index = invocation.argv.index("--effort")
+        assert invocation.argv[index + 1] == expected
+        assert invocation.env["CLAUDE_CODE_EFFORT_LEVEL"] == expected
+    assert os.environ["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
 
 
 @pytest.mark.parametrize("mutation", ["key", "token", "cloud", "helper", "unknown", "logged_out"])

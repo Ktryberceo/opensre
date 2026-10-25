@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from config.constants.repl_autonomy import DEFAULT_AUTO_LEVEL, format_auto_status_bar
 from infrastructure.terminal import theme as ui_theme
 from surfaces.interactive_shell.ui.input_prompt.layout import clip_prompt_text, prompt_line_width
+from surfaces.shared.terminal.model_status import effort_status_label, model_status_label
 
 if TYPE_CHECKING:
     from surfaces.interactive_shell.session import Session
@@ -27,7 +28,18 @@ def auto_status_ansi(session: Session, *, quiet: bool = False, max_width: int | 
     left = f"{STATUS_TEXT_INDENT}{format_auto_status_bar(level)}"
     provider, model = session.terminal.provider_model
     if provider != "unknown":
-        left += f" · {provider} / {model}"
+        snapshot = session.terminal.model_runtime
+        visible_model = model
+        effort = effort_status_label(provider, model, session.reasoning_effort)
+        if snapshot is not None and (snapshot.provider, snapshot.requested_model) == (
+            provider,
+            model,
+        ):
+            visible_model = snapshot.model or model
+            effort = effort or snapshot.reasoning_effort
+        left += f" · {model_status_label(provider, visible_model)}"
+        if effort:
+            left += f" ({effort})"
     width = prompt_line_width() if max_width is None else max_width
     clipped = clip_prompt_text(left, width)
     title_end = clipped.find(" · ")

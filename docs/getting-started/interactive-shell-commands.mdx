@@ -270,7 +270,7 @@ Typical fields:
 | `interactions` | Count of recorded turns (chat, slash, alerts) |
 | `incoming alerts` | Alerts received by the local listener this session, plus age of the latest |
 | `trust mode` | `on` / `off` |
-| `reasoning effort` | Current `/effort` level (OpenAI/Codex only) |
+| `reasoning effort` | Current `/effort` level (OpenAI, Codex, and Claude subscription) |
 | `provider` | Active `LLM_PROVIDER` |
 | `accumulated context` | Comma-separated keys from prior turns (e.g. `service`, `cluster`) |
 
@@ -354,7 +354,11 @@ Set reasoning depth for **OpenAI and Codex** providers in this REPL session only
 
 Bare `/effort` prints the current level, the config default for your provider/model, and supported choices. `/status` includes the same field.
 
-Other providers (Anthropic, Ollama, etc.) ignore `/effort`; the shell prints a hint suggesting `/model set openai` or `/model set codex`. Set `OPENSRE_REASONING_EFFORT` in the environment for non-interactive defaults. See [LLM providers](/platform/llm-providers).
+The Claude subscription connection also honors `/effort` and defaults to `high`.
+The footer shows the configured level immediately, and every CLI invocation sends
+the same value with `--effort`. Other providers without effort support (Anthropic API,
+Ollama, etc.) ignore `/effort`; the shell prints a hint. Set `OPENSRE_REASONING_EFFORT`
+in the environment for non-interactive defaults. See [LLM providers](/platform/llm-providers).
 
 </Accordion>
 

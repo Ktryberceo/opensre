@@ -138,7 +138,7 @@ def _cmd_effort(session: Session, console: Console, args: list[str]) -> bool:
         if not provider_supports_reasoning_effort(provider):
             console.print(
                 f"[{DIM}]current provider {provider} ignores this setting; "
-                "switch to openai or codex to use it.[/]"
+                "choose a provider that supports reasoning-effort overrides.[/]"
             )
         return True
 
@@ -156,12 +156,12 @@ def _cmd_effort(session: Session, console: Console, args: list[str]) -> bool:
     if not provider_supports_reasoning_effort(provider):
         console.print(
             f"[{DIM}]current provider {provider} ignores this setting; "
-            "switch to openai or codex to use it.[/]"
+            "choose a provider that supports reasoning-effort overrides.[/]"
         )
     elif effort in {ReasoningEffort.XHIGH, ReasoningEffort.MAX}:
         console.print(
-            f"[{DIM}]xhigh/max work best with newer GPT-5 or Codex models; "
-            "older reasoning models may reject them.[/]"
+            f"[{DIM}]Available effort levels depend on the selected model; "
+            "the provider may reject unsupported levels.[/]"
         )
     return True
 

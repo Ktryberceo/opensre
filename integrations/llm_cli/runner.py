@@ -16,7 +16,8 @@ from typing import Any, cast
 
 from pydantic import BaseModel
 
-from config.llm_reasoning_effort import ReasoningEffort, get_active_reasoning_effort
+from config.llm_reasoning_effort import resolve_cli_reasoning_effort
+from core.llm.shared.model_runtime import ModelRuntimeSnapshot, report_model_runtime
 from core.llm.shared.structured_output import StructuredOutputClient
 from core.llm.shared.usage import emit_usage
 from core.llm.types import (
@@ -186,10 +187,8 @@ class CLIBackedLLMClient:
             )
         auth_probe_unclear = probe.logged_in is None
 
-        reasoning_effort = (
-            ReasoningEffort.LOW.value
-            if _is_toolcall_model_type(self._model_type)
-            else get_active_reasoning_effort()
+        reasoning_effort = resolve_cli_reasoning_effort(
+            self._adapter.name, toolcall=_is_toolcall_model_type(self._model_type)
         )
         invocation = self._adapter.build(
             prompt=flat,
@@ -510,6 +509,14 @@ class CLIBackedLLMClient:
                     auth_probe_detail=prepared.auth_probe_detail,
                 )
             response = decoder.finish()
+            report_model_runtime(
+                ModelRuntimeSnapshot(
+                    provider=self._adapter.name,
+                    requested_model=self._model or "",
+                    model=response.model,
+                    reasoning_effort=response.reasoning_effort,
+                )
+            )
             if not delivered:
                 yield response.content
             self._usage_callback(

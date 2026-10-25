@@ -21,6 +21,75 @@ from surfaces.interactive_shell.session import Session
 
 
 @pytest.mark.asyncio
+async def test_concurrent_turns_keep_reported_models_in_their_own_footer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.llm.shared.model_runtime import ModelRuntimeSnapshot, report_model_runtime
+    from surfaces.interactive_shell.runtime.agent_presentation import AgentEvent
+    from surfaces.interactive_shell.ui.auto_status import auto_status_ansi
+
+    barrier = threading.Barrier(2)
+
+    def invoke(text: str, *_args: object, **_kwargs: object) -> None:
+        barrier.wait(timeout=3)
+        report_model_runtime(
+            ModelRuntimeSnapshot(
+                provider="claude-code-subscription",
+                requested_model="opus",
+                model=text,
+                reasoning_effort="high" if text.endswith("b") else None,
+            )
+        )
+
+    monkeypatch.setattr(shell_turn_execution, "execute_shell_turn", invoke)
+    monkeypatch.setattr(
+        turn_host, "detect_provider_model", lambda: ("claude-code-subscription", "opus")
+    )
+    runtimes = [
+        AgentTurnResources(
+            session=Session(),
+            state=ReplState(),
+            spinner=SpinnerState(),
+            invalidate_prompt=lambda: None,
+            console=Console(file=StringIO()),
+        )
+        for _ in range(2)
+    ]
+
+    async def emit(_event: AgentEvent) -> None:
+        """Keep the process-wide terminal renderer out of concurrent session workers."""
+
+    async def run(runtime: AgentTurnResources, text: str) -> None:
+        cancel = threading.Event()
+        await turn_host._run_agent_turn_loop(
+            runtime=runtime,
+            text=text,
+            output=turn_host._streaming_console(runtime, cancel),
+            confirm=lambda _prompt: "n",
+            emit=emit,
+            dispatch_cancel=cancel,
+        )
+
+    await asyncio.wait_for(
+        asyncio.gather(
+            run(runtimes[0], "claude-opus-version-a"),
+            run(runtimes[1], "claude-opus-version-b"),
+        ),
+        timeout=5,
+    )
+    first = auto_status_ansi(runtimes[0].session, max_width=160)
+    assert "Claude / claude-opus-version-a" in first
+    assert "CLI default" not in first
+    assert "(high)" in first
+    assert "Claude / claude-opus-version-b (high)" in auto_status_ansi(
+        runtimes[1].session, max_width=160
+    )
+    runtimes[0].session.terminal.provider_model = ("claude-code-subscription", "sonnet")
+    assert "Claude / Sonnet" in auto_status_ansi(runtimes[0].session, max_width=160)
+    assert "version-a" not in auto_status_ansi(runtimes[0].session, max_width=160)
+
+
+@pytest.mark.asyncio
 async def test_redraws_do_not_resolve_credentials_and_completed_turn_refreshes_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from prompt_toolkit.history import History
 
     from core.agent_harness.spi.session_state import PendingUserChoice, SetupResume
+    from core.llm.shared.model_runtime import ModelRuntimeSnapshot
     from surfaces.interactive_shell.session.connection_checks import (
         ConnectionCheck,
         ConnectionCheckKey,
@@ -101,6 +102,9 @@ class TerminalSession:
 
     provider_model: tuple[str, str] = ("unknown", "unknown")
     """Display route resolved at prompt setup and after turns, never during redraw."""
+
+    model_runtime: ModelRuntimeSnapshot | None = None
+    """Last reported request metadata, displayed only while its connection still matches."""
 
     prompt_history_backend: History | None = None
     """The live ``prompt_toolkit.History`` object backing the input prompt.

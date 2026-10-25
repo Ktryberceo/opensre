@@ -10,11 +10,13 @@ from dataclasses import replace
 from typing import Any
 
 from config.constants.claude_code import (
+    CLAUDE_CODE_EFFORT_LEVEL_ENV,
     CLAUDE_SUBSCRIPTION_BIN_ENV,
     CLAUDE_SUBSCRIPTION_CONFLICT_ENVS,
     CLAUDE_SUBSCRIPTION_MODELS,
     CLAUDE_SUBSCRIPTION_PROVIDER,
 )
+from config.llm_reasoning_effort import resolve_provider_reasoning_effort
 from core.llm.subscriptions.types import CLISubscriptionAuth, SubscriptionLoginRequired
 from integrations.llm_cli.base import CLIInvocation, CLIProbe
 from integrations.llm_cli.binary_resolver import (
@@ -29,6 +31,10 @@ from integrations.llm_cli.subprocess_env import build_cli_subprocess_env
 
 class _SubscriptionStatusUnknown(SubscriptionLoginRequired):
     """The CLI probe failed; authentication remains unknown, never an API fallback."""
+
+
+class _SubscriptionSignedOut(SubscriptionLoginRequired):
+    """The CLI explicitly reports no session; interactive setup may start sign-in."""
 
 
 def _binary() -> str:
@@ -72,6 +78,17 @@ def resolve() -> CLISubscriptionAuth:
             "Claude Code subscription status could not be confirmed. Run `claude auth status` and retry."
         ) from exc
     if (
+        proc.returncode in (0, 1)
+        and isinstance(data, dict)
+        and data.get("loggedIn") is False
+        and data.get("authMethod") == "none"
+        and data.get("apiProvider", "firstParty") == "firstParty"
+        and not data.get("apiKeySource")
+    ):
+        raise _SubscriptionSignedOut(
+            "Sign in to your Claude subscription with `claude auth login`; this connection requires CLI-confirmed subscription billing."
+        )
+    if (
         proc.returncode != 0
         or not isinstance(data, dict)
         or data.get("loggedIn") is not True
@@ -108,13 +125,33 @@ def login(
     new_account: bool = False,
     credential: str | None = None,
 ) -> str:
-    """Connect an existing vendor-owned login; the CLI owns its interactive sign-in."""
+    """Reuse a subscription session or let the official CLI sign in before selection."""
     del present
     if profile_id or new_account or credential is not None:
         raise SubscriptionLoginRequired(
             "Claude Code manages accounts and credentials. Use `claude auth logout` / `claude auth login` to change accounts, then reconnect."
         )
-    return select_model(models())
+    try:
+        available_models = models()
+    except _SubscriptionSignedOut:
+        try:
+            # Inherit the terminal so the vendor owns browser/code entry and Ctrl+C.
+            proc = subprocess.run(
+                [_binary(), "auth", "login", "--claudeai"],
+                check=False,
+                timeout=300,
+                env=build_cli_subprocess_env(None),
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise SubscriptionLoginRequired(
+                "Claude Code sign-in could not finish. Retry login or run `claude auth login` directly."
+            ) from exc
+        if proc.returncode != 0:
+            raise SubscriptionLoginRequired(
+                "Claude Code sign-in did not complete. Retry login."
+            ) from None
+        available_models = models()
+    return select_model(available_models)
 
 
 def logout() -> str:
@@ -175,7 +212,13 @@ class ClaudeCodeSubscriptionAdapter(ClaudeCodeAdapter):
         argv = list(original.argv)
         argv[argv.index("--output-format") + 1] = "stream-json"
         argv.extend(["--verbose", "--include-partial-messages"])
-        return replace(original, argv=tuple(argv))
+        effort = resolve_provider_reasoning_effort(self.name, model, choice=reasoning_effort)
+        env = dict(original.env or {})
+        if effort is not None:
+            argv.extend(["--effort", effort])
+            # Claude's env override outranks --effort; pin both to OpenSRE's choice.
+            env[CLAUDE_CODE_EFFORT_LEVEL_ENV] = effort
+        return replace(original, argv=tuple(argv), env=env)
 
     def parse(self, *, stdout: str, stderr: str, returncode: int) -> str:
         if returncode != 0:

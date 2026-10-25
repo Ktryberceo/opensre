@@ -33,6 +33,7 @@ from core.agent_harness.spi.cancel import (
     turn_cancel_reason,
 )
 from core.llm.shared.llm_retry import OpenSRECreditsExhaustedError
+from core.llm.shared.model_runtime import ModelRuntimeSnapshot, collect_model_runtime
 from infrastructure.analytics.usage_context import UsageSurface, bound_usage_context
 from infrastructure.observability.trace.spans import (
     bind_session_trace,
@@ -383,6 +384,7 @@ async def _run_agent_turn_loop(
     # Repaint the prompt now so the spinner shows the turn is in flight
     # immediately, instead of waiting for the ticker's next 100 ms tick.
     runtime.invalidate_prompt()
+    model_snapshots: list[ModelRuntimeSnapshot] = []
     try:
         # Imported lazily so constructing the controller (and importing this
         # module) does not pull the harness/turn-execution stack
@@ -390,6 +392,7 @@ async def _run_agent_turn_loop(
         from surfaces.interactive_shell.runtime.shell_turn_execution import execute_shell_turn
 
         with (
+            collect_model_runtime() as model_snapshots,
             bound_usage_context(
                 surface=UsageSurface.CLI,
                 session_id=runtime.session.session_id,
@@ -422,6 +425,11 @@ async def _run_agent_turn_loop(
         runtime.state.finish_dispatch(dispatch_cancel)
         try:
             runtime.session.terminal.provider_model = await asyncio.to_thread(detect_provider_model)
+            provider, model = runtime.session.terminal.provider_model
+            for snapshot in reversed(model_snapshots):
+                if (snapshot.provider, snapshot.requested_model) == (provider, model):
+                    runtime.session.terminal.model_runtime = snapshot
+                    break
         finally:
             await emit(AgentEvent(type="turn_end"))
 

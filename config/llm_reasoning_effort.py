@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from enum import StrEnum
 
+from config.llm_auth.subscriptions import SUBSCRIPTION_BY_VALUE
+
 
 class ReasoningEffort(StrEnum):
     """Closed user-facing reasoning-effort vocabulary for REPL and env overrides."""
@@ -112,7 +114,32 @@ def get_active_reasoning_effort() -> str | None:
 
 def provider_supports_reasoning_effort(provider: str | None) -> bool:
     """Whether the current provider is wired to consume the REPL effort override."""
-    return (provider or "").strip().lower() in {"openai", "codex"}
+    normalized = (provider or "").strip().lower()
+    subscription = SUBSCRIPTION_BY_VALUE.get(normalized)
+    return normalized in {"openai", "codex"} or (
+        subscription is not None and subscription.default_reasoning_effort is not None
+    )
+
+
+def resolve_provider_reasoning_effort(
+    provider: str, model: str | None = None, *, choice: ReasoningEffort | str | None = None
+) -> str | None:
+    """Resolve the same effective preference for invocation arguments and terminal display."""
+    if not provider_supports_reasoning_effort(provider):
+        return None
+    return (
+        runtime_reasoning_effort(choice)
+        or get_active_reasoning_effort()
+        or infer_reasoning_effort_default(provider, model)
+    )
+
+
+def resolve_cli_reasoning_effort(provider: str, *, toolcall: bool) -> str | None:
+    """Honor subscription-wide effort policies, preserving other CLIs' role defaults."""
+    subscription = SUBSCRIPTION_BY_VALUE.get(provider)
+    if subscription is not None and subscription.default_reasoning_effort is not None:
+        return resolve_provider_reasoning_effort(provider)
+    return ReasoningEffort.LOW.value if toolcall else get_active_reasoning_effort()
 
 
 def infer_reasoning_effort_default(provider: str | None, model: str | None) -> str | None:
@@ -123,6 +150,9 @@ def infer_reasoning_effort_default(provider: str | None, model: str | None) -> s
     """
     normalized_provider = (provider or "").strip().lower()
     normalized_model = (model or "").strip().lower()
+    subscription = SUBSCRIPTION_BY_VALUE.get(normalized_provider)
+    if subscription is not None and subscription.default_reasoning_effort is not None:
+        return subscription.default_reasoning_effort
     if normalized_provider in {"openai", "codex"}:
         model_effort = model_default_reasoning_effort(normalized_model)
         if model_effort is not None:
@@ -183,6 +213,8 @@ __all__ = [
     "model_default_reasoning_effort",
     "parse_reasoning_effort",
     "resolve_reasoning_effort",
+    "resolve_provider_reasoning_effort",
+    "resolve_cli_reasoning_effort",
     "provider_supports_reasoning_effort",
     "runtime_reasoning_effort",
 ]

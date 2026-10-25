@@ -359,12 +359,20 @@ class TestDispatchSlash:
         assert "off" in out and "all actions require approval" in out
         assert "/trust on skips approval" in out
 
-    def test_effort_sets_session_preference(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("provider", ["openai", "claude-code-subscription"])
+    def test_effort_sets_session_preference(
+        self, monkeypatch: pytest.MonkeyPatch, provider: str
+    ) -> None:
+        from surfaces.interactive_shell.ui.auto_status import auto_status_ansi
+
         class _FakeLLM:
             provider = "openai"
 
-        monkeypatch.setattr(repl_data_module, "load_llm_settings", lambda: _FakeLLM())
+        settings = _FakeLLM()
+        settings.provider = provider
+        monkeypatch.setattr(repl_data_module, "load_llm_settings", lambda: settings)
         session = Session()
+        session.terminal.provider_model = (provider, "test-model")
         console, buf = _capture()
 
         dispatch_slash("/effort max", session, console)
@@ -373,6 +381,8 @@ class TestDispatchSlash:
         output = buf.getvalue()
         assert "reasoning effort set to" in output
         assert "runtime: xhigh" in output
+        assert "ignores" not in output
+        assert "test-model (xhigh)" in auto_status_ansi(session, max_width=160)
 
     def test_effort_rejects_unknown_value(self) -> None:
         session = Session()

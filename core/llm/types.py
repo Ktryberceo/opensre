@@ -89,6 +89,9 @@ class LLMResponse:
     #: ``None`` means the provider sent no cache fields — distinct from 0.
     cache_read_tokens: int | None = None
     cache_creation_tokens: int | None = None
+    #: Runtime facts reported by the provider; absent values must not be inferred.
+    model: str | None = None
+    reasoning_effort: str | None = None
 
 
 @dataclass

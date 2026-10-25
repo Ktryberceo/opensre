@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from config.constants.repl_autonomy import AutoLevel
 from surfaces.interactive_shell.session import Session
 from surfaces.interactive_shell.ui.auto_status import auto_status_ansi
@@ -41,6 +43,36 @@ def test_idle_status_updates_model_without_hiding_permissions() -> None:
     assert "Auto (High)" in rendered
     assert "Allow all" in rendered
     assert "chatgpt / gpt-6.1-sol" in rendered
+
+
+def test_cli_subscription_footer_shows_configured_effort_before_a_response(monkeypatch) -> None:
+    from config.llm_reasoning_effort import ReasoningEffort
+
+    session = Session()
+    monkeypatch.delenv("OPENSRE_REASONING_EFFORT", raising=False)
+    session.terminal.provider_model = ("claude-code-subscription", "opus")
+    assert "Claude / Opus (high)" in auto_status_ansi(session, max_width=160)
+    session.reasoning_effort = ReasoningEffort.HIGH
+    rendered = auto_status_ansi(session, max_width=160)
+    assert "Claude / Opus" in rendered
+    assert "claude-code-subscription" not in rendered
+    assert "Effort:" not in rendered
+    assert "CLI default" not in rendered
+    assert "(alias)" not in rendered
+    assert "(high)" in rendered
+
+
+@pytest.mark.parametrize("effort", [None, "low", "high"])
+def test_footer_shows_effective_supported_effort(monkeypatch, effort) -> None:
+    from config.llm_reasoning_effort import parse_reasoning_effort
+
+    monkeypatch.delenv("OPENSRE_REASONING_EFFORT", raising=False)
+    session = Session()
+    session.terminal.provider_model = ("openai", "gpt-6.1-sol")
+    session.reasoning_effort = parse_reasoning_effort(effort)
+    rendered = auto_status_ansi(session, max_width=160)
+    assert f"gpt-6.1-sol ({effort or 'xhigh'})" in rendered
+    assert "Effort:" not in rendered
 
 
 def test_busy_keeps_dim_auto_under_thinking() -> None:

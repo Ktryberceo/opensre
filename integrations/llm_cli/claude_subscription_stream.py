@@ -15,6 +15,8 @@ class ClaudeSubscriptionStream:
         self._pending = ""
         self._result: dict[str, Any] | None = None
         self._text: list[str] = []
+        self._model: str | None = None
+        self._effort: str | None = None
 
     def feed(self, chunk: str) -> list[str]:
         self._pending += chunk
@@ -31,7 +33,21 @@ class ClaudeSubscriptionStream:
             if not isinstance(event, dict):
                 raise RuntimeError("Claude Code returned an invalid stream record.")
             kind = event.get("type")
-            if kind == "result":
+            if kind == "system" and event.get("subtype") == "init" and self._result is None:
+                model = event.get("model")
+                if isinstance(model, str) and model.strip():
+                    self._model = model.strip()
+                effort = event.get("effort")
+                if isinstance(effort, str) and effort in {
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max",
+                    "auto",
+                }:
+                    self._effort = effort
+            elif kind == "result":
                 if self._result is not None:
                     raise RuntimeError("Claude Code returned more than one terminal result.")
                 self._result = event
@@ -66,6 +82,12 @@ class ClaudeSubscriptionStream:
         if not isinstance(content, str) or not content.strip():
             raise RuntimeError("Claude Code returned an empty terminal result.")
         usage = result.get("usage") or {}
+        model = self._model
+        model_usage = result.get("modelUsage")
+        if model is None and isinstance(model_usage, dict) and len(model_usage) == 1:
+            reported_model = next(iter(model_usage))
+            if isinstance(reported_model, str) and reported_model.strip():
+                model = reported_model.strip()
 
         def tokens(key: str) -> int | None:
             value = usage.get(key)
@@ -81,4 +103,6 @@ class ClaudeSubscriptionStream:
             tokens("output_tokens"),
             tokens("cache_read_input_tokens"),
             tokens("cache_creation_input_tokens"),
+            model=model,
+            reasoning_effort=self._effort,
         )

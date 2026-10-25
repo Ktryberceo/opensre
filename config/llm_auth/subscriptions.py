@@ -3,7 +3,12 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from config.constants.claude_code import CLAUDE_SUBSCRIPTION_MODEL_ENV, CLAUDE_SUBSCRIPTION_PROVIDER
+from config.constants.claude_code import (
+    CLAUDE_SUBSCRIPTION_DEFAULT_EFFORT,
+    CLAUDE_SUBSCRIPTION_MODEL_ENV,
+    CLAUDE_SUBSCRIPTION_MODELS,
+    CLAUDE_SUBSCRIPTION_PROVIDER,
+)
 
 
 @dataclass(frozen=True)
@@ -18,6 +23,10 @@ class SubscriptionProvider:
     auth_hint: str = "Sign in using your browser; provider plan limits apply."
     usage_hint: str = "Provider subscription limits apply."
     transport: Literal["litellm", "cli"] = "litellm"
+    status_label: str = ""
+    status_model_labels: tuple[tuple[str, str], ...] = ()
+    default_reasoning_effort: str | None = None
+    """When set, apply the configured effort across all CLI roles, including tool calls."""
 
 
 SUBSCRIPTION_PROVIDERS = (
@@ -27,9 +36,12 @@ SUBSCRIPTION_PROVIDERS = (
         CLAUDE_SUBSCRIPTION_MODEL_ENV,
         "sonnet",
         auth_method="cli",
-        auth_hint="Sign in with `claude auth login`, then connect your Claude subscription here.",
+        auth_hint="Reuse your Claude Code subscription session, or sign in through its official CLI.",
         usage_hint="Claude Code manages plan limits and renewal; its extra-usage settings still apply.",
         transport="cli",
+        status_label="Claude",
+        default_reasoning_effort=CLAUDE_SUBSCRIPTION_DEFAULT_EFFORT,
+        status_model_labels=tuple((model, model.title()) for model in CLAUDE_SUBSCRIPTION_MODELS),
     ),
     SubscriptionProvider(
         "chatgpt",
